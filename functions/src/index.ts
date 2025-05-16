@@ -12,9 +12,10 @@
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 // import Stripe from "stripe";
-import {onCall, HttpsError} from "firebase-functions/v2/https";
+// import {onCall, HttpsError} from "firebase-functions/v2/https";
 import Anthropic from "@anthropic-ai/sdk";
-// import * as cors from "cors";
+import {onRequest} from "firebase-functions/v2/https";
+import * as cors from "cors";
 
 // Start writing functions
 // https://firebase.google.com/docs/functions/typescript
@@ -27,8 +28,13 @@ import Anthropic from "@anthropic-ai/sdk";
 // Initialize Firebase Admin
 admin.initializeApp();
 
-// Initialize CORS middleware
-// const corsHandler = cors({origin: true});
+// Initialize CORS middleware with specific configuration
+const corsHandler = cors({
+  origin: "https://quiz.noahgdorfman.com",
+  methods: ["POST", "OPTIONS"],
+  credentials: true,
+  allowedHeaders: ["Content-Type", "Authorization"],
+});
 
 // const stripe = new Stripe(functions.config().stripe.secret_key, {
 //   apiVersion: "2025-04-30.basil" as Stripe.LatestApiVersion,
@@ -101,76 +107,102 @@ admin.initializeApp();
 //   });
 
 // Flashcard Generation Function (v2)
-export const generateFlashcards = onCall({
+export const generateFlashcards = onRequest({
   memory: "1GiB",
   timeoutSeconds: 60,
   region: "us-central1",
-  cors: true,
-}, async (request) => {
-  const {topic, count = 10, apiKey} = request.data;
-
-  if (!topic) {
-    throw new HttpsError(
-      "invalid-argument", "Topic is required");
+}, async (req, res) => {
+  // Handle CORS preflight
+  if (req.method === "OPTIONS") {
+    res.set("Access-Control-Allow-Origin", "https://quiz.noahgdorfman.com");
+    res.set("Access-Control-Allow-Methods", "POST, OPTIONS");
+    res.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    res.set("Access-Control-Allow-Credentials", "true");
+    res.status(204).send("");
+    return;
   }
 
-  try {
-    const anthropic = new Anthropic({
-      apiKey: apiKey || functions.config().anthropic.api_key,
-    });
+  // Log request details
+  console.log("Received request:", {
+    method: req.method,
+    headers: req.headers,
+    body: req.body,
+    query: req.query,
+  });
 
-    const maxTokens = 4000;
-    const response = await anthropic.messages.create({
-      model: "claude-3-haiku-20240307",
-      max_tokens: maxTokens,
-      messages: [
-        {
-          role: "user",
-          content: `Generate ${count} high-quality flashcards about ${topic}. 
-          Format each card as JSON with 'question' and 'answer' fields. 
-          Return only the JSON array, no additional text.`,
-        },
-      ],
-    });
-
-    const contentBlock = response.content[0];
-    let raw = (contentBlock && "text" in contentBlock) ? contentBlock.text :
-      JSON.stringify(contentBlock);
-
-    // Try to extract the JSON array
-    const firstBracket = raw.indexOf("[");
-    const lastBracket = raw.lastIndexOf("]");
-    if (firstBracket !== -1 &&
-            lastBracket !== -1 &&
-            lastBracket > firstBracket) {
-      raw = raw.substring(firstBracket,
-        lastBracket + 1);
-    }
-
-    let flashcards;
+  // Handle CORS for actual request
+  return corsHandler(req, res, async () => {
     try {
-      flashcards = JSON.parse(raw) as Array<{
-                question: string;
-                answer: string
-            }>;
-    } catch (e) {
-      throw new HttpsError(
-        "internal",
-        "Failed. Try generating a smaller set or reword your topic.");
+      const {topic, count = 10, apiKey} = req.body;
+
+      console.log("Parsed request body:",
+        {topic, count, apiKey: apiKey ? "present" : "not present"});
+
+      if (!topic) {
+        console.error("Topic is missing from request");
+        res.status(400).json({error: "Topic is required"});
+        return;
+      }
+
+      const anthropic = new Anthropic({
+        apiKey: apiKey || functions.config().anthropic.api_key,
+      });
+
+      const maxTokens = 4000;
+      const response = await anthropic.messages.create({
+        model: "claude-3-haiku-20240307",
+        max_tokens: maxTokens,
+        messages: [
+          {
+            role: "user",
+            content: `Generate ${count} high-quality flashcards about ${topic}. 
+                        Format each card as JSON with 
+                        'question' and 'answer' fields. 
+                        Return only the JSON array, no additional text.`,
+          },
+        ],
+      });
+
+      const contentBlock = response.content[0];
+      let raw = (contentBlock && "text" in contentBlock) ? contentBlock.text :
+        JSON.stringify(contentBlock);
+
+      // Try to extract the JSON array
+      const firstBracket = raw.indexOf("[");
+      const lastBracket = raw.lastIndexOf("]");
+      if (firstBracket !== -1 &&
+                lastBracket !== -1 &&
+                lastBracket > firstBracket) {
+        raw = raw.substring(firstBracket,
+          lastBracket + 1);
+      }
+
+      let flashcards;
+      try {
+        flashcards = JSON.parse(raw) as Array<{
+                    question: string;
+                    answer: string
+                }>;
+      } catch (e) {
+        res.status(500).json(
+          {
+            error: "Failed. Try generating a smaller set or reword your topic.",
+          });
+        return;
+      }
+
+      const formattedFlashcards = flashcards.map((card, index) => ({
+        id: `temp-${index}`,
+        question: card.question,
+        answer: card.answer,
+        topic,
+        createdAt: Date.now(),
+      }));
+
+      res.json({flashcards: formattedFlashcards});
+    } catch (error) {
+      console.error("Error generating flashcards:", error);
+      res.status(500).json({error: "Failed to generate flashcards"});
     }
-
-    const formattedFlashcards = flashcards.map((card, index) => ({
-      id: `temp-${index}`,
-      question: card.question,
-      answer: card.answer,
-      topic,
-      createdAt: Date.now(),
-    }));
-
-    return {flashcards: formattedFlashcards};
-  } catch (error) {
-    console.error("Error generating flashcards:", error);
-    throw new HttpsError(
-      "internal", "Failed to generate flashcards");
-  }
+  });
 });
