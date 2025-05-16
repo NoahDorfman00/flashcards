@@ -9,12 +9,13 @@
 
 // import {onRequest} from "firebase-functions/v2/https";
 // import * as logger from "firebase-functions/logger";
-import * as functions from "firebase-functions";
+// import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 // import Stripe from "stripe";
 // import {onCall, HttpsError} from "firebase-functions/v2/https";
 import Anthropic from "@anthropic-ai/sdk";
 import {onRequest} from "firebase-functions/v2/https";
+import {defineSecret} from "firebase-functions/params";
 import * as cors from "cors";
 
 // Start writing functions
@@ -27,6 +28,21 @@ import * as cors from "cors";
 
 // Initialize Firebase Admin
 admin.initializeApp();
+
+// Define secrets
+const anthropicApiKey = defineSecret("ANTHROPIC_API_KEY");
+
+// Temporary function to check environment variables
+export const checkEnv = onRequest({
+  secrets: [anthropicApiKey],
+  region: "us-central1",
+}, async (req, res) => {
+  res.json({
+    hasAnthropicKey: !!anthropicApiKey.value(),
+    keyLength: anthropicApiKey.value()?.length,
+    envKeys: Object.keys(process.env),
+  });
+});
 
 // Initialize CORS middleware with specific configuration
 const corsHandler = cors({
@@ -108,6 +124,7 @@ const corsHandler = cors({
 
 // Flashcard Generation Function (v2)
 export const generateFlashcards = onRequest({
+  secrets: [anthropicApiKey],
   memory: "1GiB",
   timeoutSeconds: 60,
   region: "us-central1",
@@ -144,8 +161,16 @@ export const generateFlashcards = onRequest({
         return;
       }
 
+      // Get the API key from secret if not provided in request
+      const anthropicKey = apiKey || anthropicApiKey.value();
+
+      if (!anthropicKey) {
+        res.status(500).json({error: "No API key available"});
+        return;
+      }
+
       const anthropic = new Anthropic({
-        apiKey: apiKey || functions.config().anthropic.api_key,
+        apiKey: anthropicKey,
       });
 
       const maxTokens = 4000;
