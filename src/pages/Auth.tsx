@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Box, Button, TextField, Typography, CircularProgress, Alert } from '@mui/material';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import Paper from '@mui/material/Paper';
 
 const Auth: React.FC = () => {
     const { login, signup, loginWithGoogle, user, loading } = useAuth();
@@ -46,60 +47,62 @@ const Auth: React.FC = () => {
     };
 
     return (
-        <Box sx={{ maxWidth: 400, mx: 'auto', mt: 6, p: 3, boxShadow: 2, borderRadius: 2 }}>
-            <Typography variant="h5" gutterBottom align="center">
-                {isSignup ? 'Sign Up' : 'Log In'}
-            </Typography>
-            <form onSubmit={handleSubmit}>
-                <TextField
-                    label="Email"
-                    type="email"
-                    value={email}
-                    onChange={e => setEmail(e.target.value)}
-                    fullWidth
-                    margin="normal"
-                    required
-                />
-                <TextField
-                    label="Password"
-                    type="password"
-                    value={password}
-                    onChange={e => setPassword(e.target.value)}
-                    fullWidth
-                    margin="normal"
-                    required
-                />
-                {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
+        <Box sx={{ maxWidth: 400, mx: 'auto', mt: 6, px: 1 }}>
+            <Paper elevation={3} sx={{ p: 3, bgcolor: '#fff', borderRadius: 4, boxShadow: '0 4px 24px 0 rgba(10,60,47,0.10)', mx: { xs: 1, sm: 0 } }}>
+                <Typography variant="h5" gutterBottom align="center">
+                    {isSignup ? 'Sign Up' : 'Log In'}
+                </Typography>
+                <form onSubmit={handleSubmit}>
+                    <TextField
+                        label="Email"
+                        type="email"
+                        value={email}
+                        onChange={e => setEmail(e.target.value)}
+                        fullWidth
+                        margin="normal"
+                        required
+                    />
+                    <TextField
+                        label="Password"
+                        type="password"
+                        value={password}
+                        onChange={e => setPassword(e.target.value)}
+                        fullWidth
+                        margin="normal"
+                        required
+                    />
+                    {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
+                    <Button
+                        type="submit"
+                        variant="contained"
+                        color="primary"
+                        fullWidth
+                        sx={{ mt: 2 }}
+                        disabled={submitting || loading}
+                    >
+                        {submitting ? <CircularProgress size={24} /> : isSignup ? 'Sign Up' : 'Log In'}
+                    </Button>
+                </form>
                 <Button
-                    type="submit"
-                    variant="contained"
-                    color="primary"
+                    variant="outlined"
+                    color="secondary"
                     fullWidth
                     sx={{ mt: 2 }}
+                    onClick={handleGoogle}
                     disabled={submitting || loading}
                 >
-                    {submitting ? <CircularProgress size={24} /> : isSignup ? 'Sign Up' : 'Log In'}
+                    {submitting ? <CircularProgress size={24} /> : 'Sign in with Google'}
                 </Button>
-            </form>
-            <Button
-                variant="outlined"
-                color="secondary"
-                fullWidth
-                sx={{ mt: 2 }}
-                onClick={handleGoogle}
-                disabled={submitting || loading}
-            >
-                {submitting ? <CircularProgress size={24} /> : 'Sign in with Google'}
-            </Button>
-            <Button
-                color="inherit"
-                fullWidth
-                sx={{ mt: 2 }}
-                onClick={() => setIsSignup(s => !s)}
-                disabled={submitting || loading}
-            >
-                {isSignup ? 'Already have an account? Log In' : "Don't have an account? Sign Up"}
-            </Button>
+                <Button
+                    color="inherit"
+                    fullWidth
+                    sx={{ mt: 2 }}
+                    onClick={() => setIsSignup(s => !s)}
+                    disabled={submitting || loading}
+                >
+                    {isSignup ? 'Already have an account? Log In' : "Don't have an account? Sign Up"}
+                </Button>
+            </Paper>
         </Box>
     );
 };

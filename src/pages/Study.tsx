@@ -70,10 +70,10 @@ const Study: React.FC = () => {
     return (
         <Box sx={{ maxWidth: 800, mx: 'auto', textAlign: 'center' }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
-                <IconButton onClick={() => isSavedSet ? navigate('/my-sets') : navigate('/')}>
+                <IconButton onClick={() => isSavedSet ? navigate('/my-sets') : navigate('/')} sx={{ color: 'primary.main' }}>
                     <ArrowBack />
                 </IconButton>
-                <Typography variant="h6">{topic}</Typography>
+                <Typography variant="h6" sx={{ color: 'primary.main', fontWeight: 700 }}>{topic}</Typography>
                 {!saved && (
                     <IconButton onClick={handleSave} disabled={saved || saving}>
                         <Save />
@@ -89,6 +89,10 @@ const Study: React.FC = () => {
                     justifyContent: 'center',
                     cursor: 'pointer',
                     mb: 2,
+                    mx: { xs: 1, sm: 4 },
+                    width: { xs: 'auto', sm: 'auto' },
+                    borderRadius: 4,
+                    boxShadow: '0 4px 24px 0 rgba(10,60,47,0.10)',
                 }}
                 onClick={() => setIsFlipped(!isFlipped)}
             >
@@ -123,7 +127,7 @@ const Study: React.FC = () => {
                 </Button>
             </Box>
 
-            <Typography sx={{ mt: 2 }}>
+            <Typography sx={{ mt: 2, color: 'primary.main', fontWeight: 500 }}>
                 Card {currentIndex + 1} of {flashcards.length}
             </Typography>
 

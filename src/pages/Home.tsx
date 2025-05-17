@@ -5,6 +5,7 @@ import { generateFlashcards } from '../services/anthropic';
 import { useAuth } from '../context/AuthContext';
 import { database } from '../services/firebase';
 import { ref, get } from 'firebase/database';
+import Paper from '@mui/material/Paper';
 
 const Home: React.FC = () => {
     const [topic, setTopic] = useState('');
@@ -70,53 +71,56 @@ const Home: React.FC = () => {
     };
 
     return (
-        <Box sx={{ maxWidth: 600, mx: 'auto', textAlign: 'center' }}>
-            <Typography variant="h4" component="h1" gutterBottom>
-                Flashcard Generator
-            </Typography>
-            <Typography variant="body1" paragraph>
-                Enter any topic, and we'll generate flashcards to help you study!
-            </Typography>
-
-            <form onSubmit={handleSubmit}>
-                <TextField
-                    fullWidth
-                    label="Enter a topic"
-                    variant="outlined"
-                    value={topic}
-                    onChange={(e) => setTopic(e.target.value)}
-                    margin="normal"
-                    required
-                />
-                <FormControl fullWidth sx={{ mt: 2 }}>
-                    <InputLabel id="flashcard-count-label">Number of Flashcards</InputLabel>
-                    <Select
-                        labelId="flashcard-count-label"
-                        value={flashcardCount}
-                        label="Number of Flashcards"
-                        onChange={e => setFlashcardCount(Number(e.target.value))}
-                    >
-                        <MenuItem value={10}>10</MenuItem>
-                        <MenuItem value={20}>20</MenuItem>
-                        <MenuItem value={30}>30</MenuItem>
-                    </Select>
-                </FormControl>
-                <Button
-                    type="submit"
-                    variant="contained"
-                    color="primary"
-                    disabled={loading || !topic}
-                    sx={{ mt: 2 }}
-                >
-                    {loading ? <CircularProgress size={24} /> : 'Generate Flashcards'}
-                </Button>
-            </form>
-
-            {error && (
-                <Typography color="error" sx={{ mt: 2 }}>
-                    {error}
+        <Box sx={{ maxWidth: 600, mx: 'auto', textAlign: 'center', mt: 8 }}>
+            <Paper elevation={3} sx={{ p: 5, borderRadius: 4, boxShadow: '0 4px 24px 0 rgba(10,60,47,0.10)', mx: { xs: 1, sm: 0 } }}>
+                <Typography variant="h4" component="h1" gutterBottom sx={{ fontWeight: 700, color: 'primary.main', letterSpacing: 1 }}>
+                    Instant AI Flashcards
                 </Typography>
-            )}
+                <Typography variant="body1" paragraph sx={{ color: 'text.secondary', fontSize: 18 }}>
+                    Generate flashcards on any subject
+                </Typography>
+
+                <form onSubmit={handleSubmit}>
+                    <TextField
+                        fullWidth
+                        label="Enter a topic"
+                        variant="outlined"
+                        value={topic}
+                        onChange={(e) => setTopic(e.target.value)}
+                        margin="normal"
+                        required
+                        sx={{ bgcolor: '#f8fafb', borderRadius: 2 }}
+                    />
+                    <FormControl fullWidth sx={{ mt: 2 }}>
+                        <InputLabel id="flashcard-count-label">Number of Flashcards</InputLabel>
+                        <Select
+                            labelId="flashcard-count-label"
+                            value={flashcardCount}
+                            label="Number of Flashcards"
+                            onChange={e => setFlashcardCount(Number(e.target.value))}
+                        >
+                            <MenuItem value={10}>10</MenuItem>
+                            <MenuItem value={20}>20</MenuItem>
+                            <MenuItem value={30}>30</MenuItem>
+                        </Select>
+                    </FormControl>
+                    <Button
+                        type="submit"
+                        variant="contained"
+                        color="primary"
+                        disabled={loading || !topic}
+                        sx={{ mt: 3, px: 5, py: 1.5, borderRadius: 3, fontWeight: 700, fontSize: 18 }}
+                    >
+                        {loading ? <CircularProgress size={24} /> : 'Generate Flashcards'}
+                    </Button>
+                </form>
+
+                {error && (
+                    <Typography color="error" sx={{ mt: 2 }}>
+                        {error}
+                    </Typography>
+                )}
+            </Paper>
 
             {/* Prompt to log in if not logged in and free generation used */}
             <Dialog open={showAuthPrompt} onClose={() => setShowAuthPrompt(false)}>
