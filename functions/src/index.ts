@@ -46,7 +46,7 @@ export const checkEnv = onRequest({
 
 // Initialize CORS middleware with specific configuration
 const corsHandler = cors({
-  origin: "https://quiz.noahgdorfman.com",
+  origin: "https://study.noahgdorfman.com",
   methods: ["POST", "OPTIONS"],
   credentials: true,
   allowedHeaders: ["Content-Type", "Authorization"],
@@ -75,8 +75,8 @@ const corsHandler = cors({
 //         quantity: 1,
 //       },
 //     ],
-//     success_url: "https://quiz.noahgdorfman.com/success",
-//     cancel_url: "https://quiz.noahgdorfman.com/cancel",
+//     success_url: "https://study.noahgdorfman.com/success",
+//     cancel_url: "https://study.noahgdorfman.com/cancel",
 //     client_reference_id: uid,
 //     customer_email: request.auth.token.email,
 //   });
@@ -131,7 +131,7 @@ export const generateFlashcards = onRequest({
 }, async (req, res) => {
   // Handle CORS preflight
   if (req.method === "OPTIONS") {
-    res.set("Access-Control-Allow-Origin", "https://quiz.noahgdorfman.com");
+    res.set("Access-Control-Allow-Origin", "https://study.noahgdorfman.com");
     res.set("Access-Control-Allow-Methods", "POST, OPTIONS");
     res.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
     res.set("Access-Control-Allow-Credentials", "true");
