@@ -12,7 +12,7 @@
 // import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import Stripe from "stripe";
-import { onCall, HttpsError, onRequest } from "firebase-functions/v2/https";
+import { onRequest } from "firebase-functions/v2/https";
 import Anthropic from "@anthropic-ai/sdk";
 import { defineSecret } from "firebase-functions/params";
 import * as cors from "cors";
@@ -56,29 +56,26 @@ const corsHandler = cors({
 // 1. Create Checkout Session (v2)
 export const createCheckoutSession = onRequest({
   secrets: [stripeSecretKey, stripePriceId],
-  cors: true,
+  cors: false,
 }, async (req, res) => {
-  // Handle CORS preflight
-  if (req.method === "OPTIONS") {
-    res.set("Access-Control-Allow-Origin", "https://study.noahgdorfman.com");
-    res.set("Access-Control-Allow-Methods", "POST, OPTIONS");
-    res.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
-    res.set("Access-Control-Allow-Credentials", "true");
-    res.status(204).send("");
-    return;
-  }
+  // Add logging for debugging
+  console.log("Request received:", {
+    method: req.method,
+    headers: req.headers,
+    origin: req.headers.origin,
+  });
 
-  // Handle CORS for actual request
+  // Use the cors middleware
   return corsHandler(req, res, async () => {
     try {
       // Get the auth token from the Authorization header
       const authHeader = req.headers.authorization;
-      if (!authHeader?.startsWith('Bearer ')) {
-        res.status(401).json({ error: 'Unauthorized' });
+      if (!authHeader?.startsWith("Bearer ")) {
+        res.status(401).json({ error: "Unauthorized" });
         return;
       }
 
-      const idToken = authHeader.split('Bearer ')[1];
+      const idToken = authHeader.split("Bearer ")[1];
       const decodedToken = await admin.auth().verifyIdToken(idToken);
       const uid = decodedToken.uid;
 
@@ -102,6 +99,11 @@ export const createCheckoutSession = onRequest({
         customer_email: decodedToken.email,
       });
 
+      // Log response headers before sending
+      console.log("Response headers before sending:", {
+        headers: res.getHeaders(),
+      });
+
       res.json({ sessionId: session.id });
     } catch (error) {
       console.error("Error creating checkout session:", error);
@@ -122,6 +124,7 @@ export const handleStripeWebhook = onRequest({
       hasBody: !!req.body,
       bodyLength: req.body?.length,
       signature: req.headers["stripe-signature"],
+      webhookSecretLength: stripeWebhookSecret.value()?.length,
     });
 
     const stripe = new Stripe(stripeSecretKey.value(), {
@@ -131,15 +134,36 @@ export const handleStripeWebhook = onRequest({
 
     const sig = req.headers["stripe-signature"] as string;
     let event: Stripe.Event;
+
     try {
+      if (!req.rawBody) {
+        console.error("No raw body available for webhook verification");
+        res.status(400).send("No raw body available");
+        return;
+      }
+
+      if (!sig) {
+        console.error("No Stripe signature found in headers");
+        res.status(400).send("No Stripe signature found");
+        return;
+      }
+
+      if (!stripeWebhookSecret.value()) {
+        console.error("No webhook secret configured");
+        res.status(500).send("Webhook secret not configured");
+        return;
+      }
+
       event = stripe.webhooks.constructEvent(
         req.rawBody,
         sig,
         stripeWebhookSecret.value()
       );
-      console.log("Webhook event constructed:", {
+
+      console.log("Webhook event constructed successfully:", {
         type: event.type,
         id: event.id,
+        object: event.data.object,
       });
     } catch (err) {
       const error = err as Error;
@@ -147,6 +171,8 @@ export const handleStripeWebhook = onRequest({
         error: error.message,
         signature: sig,
         hasWebhookSecret: !!stripeWebhookSecret.value(),
+        webhookSecretLength: stripeWebhookSecret.value()?.length,
+        rawBodyLength: req.rawBody?.length,
       });
       res.status(400).send(`Webhook Error: ${error.message}`);
       return;
@@ -160,13 +186,13 @@ export const handleStripeWebhook = onRequest({
         uid,
         sessionId: session.id,
         customerId: session.customer,
+        subscriptionId: session.subscription,
       });
 
       if (uid) {
         try {
           await admin.database().ref(`users/${uid}/isSubscribed`).set(true);
-          console.log("Successfully updated subscription status for user:",
-            uid);
+          console.log("Successfully updated subscription status for user:", uid);
         } catch (err) {
           console.error("Failed to update subscription status:", err);
           res.status(500).send("Failed to update subscription status");
@@ -176,12 +202,14 @@ export const handleStripeWebhook = onRequest({
         console.error("No user ID found in session:", session);
       }
     }
+
     if (event.type === "customer.subscription.deleted") {
-      console.log("Processing customer.subscription.deleted:",
-        event.data.object);
-      // Optionally handle subscription cancellation
-      // You may want to look up the user by Stripe customer
-      // ID if you store it
+      const subscription = event.data.object as Stripe.Subscription;
+      console.log("Processing customer.subscription.deleted:", {
+        subscriptionId: subscription.id,
+        customerId: subscription.customer,
+      });
+      // TODO: Handle subscription cancellation
     }
 
     res.json({ received: true });

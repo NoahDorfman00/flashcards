@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { database } from '../services/firebase';
 import { ref, get } from 'firebase/database';
 import Paper from '@mui/material/Paper';
+import { loadStripe } from '@stripe/stripe-js';
 
 const Home: React.FC = () => {
     const [topic, setTopic] = useState('');
@@ -15,25 +16,34 @@ const Home: React.FC = () => {
     const [showKeyPrompt, setShowKeyPrompt] = useState(false);
     const [userAnthropicKey, setUserAnthropicKey] = useState<string | null>(null);
     const [flashcardCount, setFlashcardCount] = useState(10);
+    const [isSubscribed, setIsSubscribed] = useState(false);
+    const [checkoutLoading, setCheckoutLoading] = useState(false);
     const navigate = useNavigate();
     const { user } = useAuth();
 
     // Check if free generation has been used
     const freeGenerationUsed = localStorage.getItem('freeGenerationUsed') === 'true';
 
-    // Fetch user's Anthropic key if logged in
+    // Fetch user's Anthropic key and subscription status if logged in
     useEffect(() => {
         if (user) {
             const keyRef = ref(database, `users/${user.uid}/anthropicKey`);
-            get(keyRef).then((snapshot) => {
-                if (snapshot.exists() && snapshot.val()) {
-                    setUserAnthropicKey(snapshot.val());
+            const subRef = ref(database, `users/${user.uid}/isSubscribed`);
+
+            Promise.all([
+                get(keyRef),
+                get(subRef)
+            ]).then(([keySnapshot, subSnapshot]) => {
+                if (keySnapshot.exists() && keySnapshot.val()) {
+                    setUserAnthropicKey(keySnapshot.val());
                 } else {
                     setUserAnthropicKey(null);
                 }
+                setIsSubscribed(subSnapshot.exists() && subSnapshot.val());
             });
         } else {
             setUserAnthropicKey(null);
+            setIsSubscribed(false);
         }
     }, [user]);
 
@@ -48,18 +58,18 @@ const Home: React.FC = () => {
         }
 
         // If user is logged in, has no key, and free generation is used, prompt to add key
-        if (user && !userAnthropicKey && freeGenerationUsed) {
+        if (user && !userAnthropicKey && freeGenerationUsed && !isSubscribed) {
             setShowKeyPrompt(true);
             return;
         }
 
         setLoading(true);
         try {
-            // Use user's key if present, otherwise use app key
-            const apiKey = userAnthropicKey || undefined;
+            // Use app key if user is subscribed, otherwise use user's key if present
+            const apiKey = isSubscribed ? undefined : userAnthropicKey || undefined;
             const flashcards = await generateFlashcards(topic, apiKey, flashcardCount);
-            // If using the app key (no user key), set freeGenerationUsed
-            if (!userAnthropicKey) {
+            // If using the app key (no user key) and not subscribed, set freeGenerationUsed
+            if (!userAnthropicKey && !isSubscribed) {
                 localStorage.setItem('freeGenerationUsed', 'true');
             }
             navigate('/study', { state: { flashcards, topic } });
@@ -67,6 +77,54 @@ const Home: React.FC = () => {
             setError('Failed to generate flashcards. Please try again.');
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleCheckout = async () => {
+        if (!user) return;
+        setCheckoutLoading(true);
+        setError(null);
+        try {
+            const publishableKey = process.env.REACT_APP_STRIPE_PUBLISHABLE_KEY;
+            if (!publishableKey) {
+                throw new Error('Stripe publishable key is not configured');
+            }
+
+            // Get the current user's ID token
+            const idToken = await user.getIdToken();
+
+            // Call the createCheckoutSession function
+            const response = await fetch('https://us-central1-flashcards-d25b9.cloudfunctions.net/createCheckoutSession', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${idToken}`,
+                    'Content-Type': 'application/json',
+                },
+                credentials: 'include',
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to create checkout session');
+            }
+
+            const { sessionId } = await response.json();
+
+            // Initialize Stripe
+            const stripe = await loadStripe(publishableKey);
+            if (!stripe) {
+                throw new Error('Failed to initialize Stripe');
+            }
+
+            // Redirect to Stripe Checkout
+            const { error } = await stripe.redirectToCheckout({ sessionId });
+            if (error) {
+                throw error;
+            }
+        } catch (err: any) {
+            setError(err.message || 'Failed to start checkout process.');
+            console.error('Checkout error:', err);
+        } finally {
+            setCheckoutLoading(false);
         }
     };
 
@@ -136,17 +194,23 @@ const Home: React.FC = () => {
                 </DialogActions>
             </Dialog>
 
-            {/* Prompt to add Anthropic key if logged in and free generation used */}
+            {/* Prompt to subscribe if logged in and free generation used */}
             <Dialog open={showKeyPrompt} onClose={() => setShowKeyPrompt(false)}>
-                <DialogTitle>Add Your Anthropic API Key</DialogTitle>
+                <DialogTitle>Subscribe to Generate More</DialogTitle>
                 <DialogContent>
                     <Typography>
-                        You have reached the limit of 1 free flashcard generation. Please add your own Anthropic API key in your profile to generate more sets!
+                        You have reached the limit of 1 free flashcard generation. Subscribe to generate unlimited sets!
                     </Typography>
                 </DialogContent>
                 <DialogActions>
                     <Button onClick={() => setShowKeyPrompt(false)}>Cancel</Button>
-                    <Button onClick={() => navigate('/profile')} variant="contained">Go to Profile</Button>
+                    <Button
+                        onClick={handleCheckout}
+                        variant="contained"
+                        disabled={checkoutLoading}
+                    >
+                        {checkoutLoading ? <CircularProgress size={24} /> : 'Subscribe Now'}
+                    </Button>
                 </DialogActions>
             </Dialog>
         </Box>

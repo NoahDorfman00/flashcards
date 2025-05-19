@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { Box, Typography, TextField, Button, Alert, CircularProgress, Divider } from '@mui/material';
+import { Box, Typography, TextField, Button, Alert, CircularProgress, Divider, Collapse, IconButton } from '@mui/material';
 import { useAuth } from '../context/AuthContext';
 import { database } from '../services/firebase';
 import { ref, get, set } from 'firebase/database';
 import Paper from '@mui/material/Paper';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { loadStripe } from '@stripe/stripe-js';
+import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
+import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 
 const Profile: React.FC = () => {
     const { user } = useAuth();
@@ -16,6 +18,7 @@ const Profile: React.FC = () => {
     const [initialLoading, setInitialLoading] = useState(true);
     const [isSubscribed, setIsSubscribed] = useState(false);
     const [checkoutLoading, setCheckoutLoading] = useState(false);
+    const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
 
     useEffect(() => {
         if (user) {
@@ -127,47 +130,59 @@ const Profile: React.FC = () => {
                         {isSubscribed ? 'Active Subscription' : 'No Active Subscription'}
                     </Typography>
                     {!isSubscribed && (
-                        <Button
-                            variant="contained"
-                            color="primary"
-                            onClick={handleCheckout}
-                            disabled={checkoutLoading}
-                            sx={{ mt: 2, px: 4, py: 1.5, borderRadius: 3, fontWeight: 700 }}
-                        >
-                            {checkoutLoading ? <CircularProgress size={24} /> : 'Subscribe Now'}
-                        </Button>
+                        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
+                            <Button
+                                variant="contained"
+                                color="primary"
+                                onClick={handleCheckout}
+                                disabled={checkoutLoading}
+                                sx={{ px: 4, py: 1.5, borderRadius: 3, fontWeight: 700 }}
+                            >
+                                {checkoutLoading ? <CircularProgress size={24} /> : 'Subscribe Now'}
+                            </Button>
+                        </Box>
                     )}
                 </Box>
 
-                <Divider sx={{ my: 3 }} />
-
-                {/* API Key Section */}
-                <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>API Settings</Typography>
-                <form onSubmit={handleSave}>
-                    <TextField
-                        label="Anthropic API Key"
-                        value={anthropicKey}
-                        onChange={e => setAnthropicKey(e.target.value)}
-                        fullWidth
-                        margin="normal"
-                        type="password"
-                        autoComplete="off"
-                        sx={{ bgcolor: '#f8fafb', borderRadius: 2 }}
-                    />
-                    {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
-                    {success && <Alert severity="success" sx={{ mt: 2 }}>Key saved!</Alert>}
-                    <Box sx={{ display: 'flex', justifyContent: 'center' }}>
-                        <Button
-                            type="submit"
-                            variant="contained"
-                            color="primary"
-                            sx={{ mt: 2, px: 4, py: 1.5, borderRadius: 3, fontWeight: 700 }}
-                            disabled={loading}
-                        >
-                            {loading ? <CircularProgress size={24} /> : 'Save Key'}
-                        </Button>
-                    </Box>
-                </form>
+                {/* Advanced Settings Section */}
+                <Box sx={{ mt: 3, display: 'flex', justifyContent: 'center' }}>
+                    <Button
+                        onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
+                        endIcon={showAdvancedSettings ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
+                        sx={{ color: 'text.secondary', mb: 1, fontSize: '0.9rem' }}
+                    >
+                        Advanced Settings
+                    </Button>
+                </Box>
+                <Collapse in={showAdvancedSettings}>
+                    <Divider sx={{ my: 2 }} />
+                    <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>API Settings</Typography>
+                    <form onSubmit={handleSave}>
+                        <TextField
+                            label="Anthropic API Key"
+                            value={anthropicKey}
+                            onChange={e => setAnthropicKey(e.target.value)}
+                            fullWidth
+                            margin="normal"
+                            type="password"
+                            autoComplete="off"
+                            sx={{ bgcolor: '#f8fafb', borderRadius: 2 }}
+                        />
+                        {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
+                        {success && <Alert severity="success" sx={{ mt: 2 }}>Key saved!</Alert>}
+                        <Box sx={{ display: 'flex', justifyContent: 'center' }}>
+                            <Button
+                                type="submit"
+                                variant="contained"
+                                color="primary"
+                                sx={{ mt: 2, px: 4, py: 1.5, borderRadius: 3, fontWeight: 700 }}
+                                disabled={loading}
+                            >
+                                {loading ? <CircularProgress size={24} /> : 'Save Key'}
+                            </Button>
+                        </Box>
+                    </form>
+                </Collapse>
             </Paper>
         </Box>
     );

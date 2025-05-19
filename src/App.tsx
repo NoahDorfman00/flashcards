@@ -8,6 +8,7 @@ import Study from './pages/Study';
 import Auth from './pages/Auth';
 import Profile from './pages/Profile';
 import MySets from './pages/MySets';
+import Success from './pages/Success';
 import { AuthProvider } from './context/AuthContext';
 
 const theme = createTheme({
@@ -73,6 +74,7 @@ function App() {
                             <Route path="/auth" element={<Auth />} />
                             <Route path="/profile" element={<Profile />} />
                             <Route path="/my-sets" element={<MySets />} />
+                            <Route path="/success" element={<Success />} />
                         </Routes>
                     </Layout>
                 </Router>
