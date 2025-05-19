@@ -12,9 +12,9 @@
 // import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import Stripe from "stripe";
-import {onCall, HttpsError, onRequest} from "firebase-functions/v2/https";
+import { onCall, HttpsError, onRequest } from "firebase-functions/v2/https";
 import Anthropic from "@anthropic-ai/sdk";
-import {defineSecret} from "firebase-functions/params";
+import { defineSecret } from "firebase-functions/params";
 import * as cors from "cors";
 
 // Start writing functions
@@ -54,44 +54,60 @@ const corsHandler = cors({
 });
 
 // 1. Create Checkout Session (v2)
-export const createCheckoutSession = onCall({
+export const createCheckoutSession = onRequest({
   secrets: [stripeSecretKey, stripePriceId],
   cors: true,
-}, async (request) => {
-  if (!request.auth) {
-    throw new HttpsError(
-      "unauthenticated", "User must be authenticated");
+}, async (req, res) => {
+  // Handle CORS preflight
+  if (req.method === "OPTIONS") {
+    res.set("Access-Control-Allow-Origin", "https://study.noahgdorfman.com");
+    res.set("Access-Control-Allow-Methods", "POST, OPTIONS");
+    res.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    res.set("Access-Control-Allow-Credentials", "true");
+    res.status(204).send("");
+    return;
   }
 
-  // Add debug logging
-  console.log("Debug - Available secrets:", {
-    hasStripeKey: !!stripeSecretKey.value(),
-    hasPriceId: !!stripePriceId.value(),
-    priceId: stripePriceId.value(),
-    envKeys: Object.keys(process.env),
-  });
+  // Handle CORS for actual request
+  return corsHandler(req, res, async () => {
+    try {
+      // Get the auth token from the Authorization header
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith('Bearer ')) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
 
-  const stripe = new Stripe(stripeSecretKey.value(), {
-    apiVersion: "2025-04-30.basil" as Stripe.LatestApiVersion,
-    typescript: true,
-  });
+      const idToken = authHeader.split('Bearer ')[1];
+      const decodedToken = await admin.auth().verifyIdToken(idToken);
+      const uid = decodedToken.uid;
 
-  const uid = request.auth.uid;
-  const session = await stripe.checkout.sessions.create({
-    payment_method_types: ["card"],
-    mode: "subscription",
-    line_items: [
-      {
-        price: stripePriceId.value(),
-        quantity: 1,
-      },
-    ],
-    success_url: "https://study.noahgdorfman.com/success",
-    cancel_url: "https://study.noahgdorfman.com/cancel",
-    client_reference_id: uid,
-    customer_email: request.auth.token.email,
+      const stripe = new Stripe(stripeSecretKey.value(), {
+        apiVersion: "2025-04-30.basil" as Stripe.LatestApiVersion,
+        typescript: true,
+      });
+
+      const session = await stripe.checkout.sessions.create({
+        payment_method_types: ["card"],
+        mode: "subscription",
+        line_items: [
+          {
+            price: stripePriceId.value(),
+            quantity: 1,
+          },
+        ],
+        success_url: "https://study.noahgdorfman.com/success",
+        cancel_url: "https://study.noahgdorfman.com/cancel",
+        client_reference_id: uid,
+        customer_email: decodedToken.email,
+      });
+
+      res.json({ sessionId: session.id });
+    } catch (error) {
+      console.error("Error creating checkout session:", error);
+      res.status(500).json({ error: "Failed to create checkout session" });
+    }
   });
-  return {sessionId: session.id};
 });
 
 // 2. Stripe Webhook Handler (v1)
@@ -168,7 +184,7 @@ export const handleStripeWebhook = onRequest({
       // ID if you store it
     }
 
-    res.json({received: true});
+    res.json({ received: true });
   });
 });
 
@@ -200,14 +216,14 @@ export const generateFlashcards = onRequest({
   // Handle CORS for actual request
   return corsHandler(req, res, async () => {
     try {
-      const {topic, count = 10, apiKey} = req.body;
+      const { topic, count = 10, apiKey } = req.body;
 
       console.log("Parsed request body:",
-        {topic, count, apiKey: apiKey ? "present" : "not present"});
+        { topic, count, apiKey: apiKey ? "present" : "not present" });
 
       if (!topic) {
         console.error("Topic is missing from request");
-        res.status(400).json({error: "Topic is required"});
+        res.status(400).json({ error: "Topic is required" });
         return;
       }
 
@@ -215,7 +231,7 @@ export const generateFlashcards = onRequest({
       const anthropicKey = apiKey || anthropicApiKey.value();
 
       if (!anthropicKey) {
-        res.status(500).json({error: "No API key available"});
+        res.status(500).json({ error: "No API key available" });
         return;
       }
 
@@ -274,10 +290,10 @@ export const generateFlashcards = onRequest({
         createdAt: Date.now(),
       }));
 
-      res.json({flashcards: formattedFlashcards});
+      res.json({ flashcards: formattedFlashcards });
     } catch (error) {
       console.error("Error generating flashcards:", error);
-      res.status(500).json({error: "Failed to generate flashcards"});
+      res.status(500).json({ error: "Failed to generate flashcards" });
     }
   });
 });

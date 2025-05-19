@@ -68,10 +68,24 @@ const Profile: React.FC = () => {
                 throw new Error('Stripe publishable key is not configured');
             }
 
-            const functions = getFunctions();
-            const createCheckoutSession = httpsCallable(functions, 'createCheckoutSession');
-            const { data } = await createCheckoutSession();
-            const { sessionId } = data as { sessionId: string };
+            // Get the current user's ID token
+            const idToken = await user.getIdToken();
+
+            // Call the createCheckoutSession function
+            const response = await fetch('https://us-central1-flashcards-d25b9.cloudfunctions.net/createCheckoutSession', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${idToken}`,
+                    'Content-Type': 'application/json',
+                },
+                credentials: 'include',
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to create checkout session');
+            }
+
+            const { sessionId } = await response.json();
 
             // Initialize Stripe
             const stripe = await loadStripe(publishableKey);
