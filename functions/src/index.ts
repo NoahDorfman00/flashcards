@@ -11,10 +11,9 @@
 // import * as logger from "firebase-functions/logger";
 // import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
-// import Stripe from "stripe";
-// import {onCall, HttpsError} from "firebase-functions/v2/https";
+import Stripe from "stripe";
+import {onCall, HttpsError, onRequest} from "firebase-functions/v2/https";
 import Anthropic from "@anthropic-ai/sdk";
-import {onRequest} from "firebase-functions/v2/https";
 import {defineSecret} from "firebase-functions/params";
 import * as cors from "cors";
 
@@ -31,7 +30,9 @@ admin.initializeApp();
 
 // Define secrets
 const anthropicApiKey = defineSecret("ANTHROPIC_API_KEY");
-
+const stripeSecretKey = defineSecret("STRIPE_SECRET_KEY");
+const stripeWebhookSecret = defineSecret("STRIPE_WEBHOOK_SECRET");
+const stripePriceId = defineSecret("STRIPE_PRICE_ID");
 // Temporary function to check environment variables
 export const checkEnv = onRequest({
   secrets: [anthropicApiKey],
@@ -52,75 +53,124 @@ const corsHandler = cors({
   allowedHeaders: ["Content-Type", "Authorization"],
 });
 
-// const stripe = new Stripe(functions.config().stripe.secret_key, {
-//   apiVersion: "2025-04-30.basil" as Stripe.LatestApiVersion,
-//   typescript: true,
-// });
-
 // 1. Create Checkout Session (v2)
-// export const createCheckoutSession = onCall({
-//   cors: true,
-// }, async (request) => {
-//   if (!request.auth) {
-//     throw new HttpsError(
-//       "unauthenticated", "User must be authenticated");
-//   }
-//   const uid = request.auth.uid;
-//   const session = await stripe.checkout.sessions.create({
-//     payment_method_types: ["card"],
-//     mode: "subscription",
-//     line_items: [
-//       {
-//         price: functions.config().stripe.price_id,
-//         quantity: 1,
-//       },
-//     ],
-//     success_url: "https://study.noahgdorfman.com/success",
-//     cancel_url: "https://study.noahgdorfman.com/cancel",
-//     client_reference_id: uid,
-//     customer_email: request.auth.token.email,
-//   });
-//   return {sessionId: session.id};
-// });
+export const createCheckoutSession = onCall({
+  secrets: [stripeSecretKey, stripePriceId],
+  cors: true,
+}, async (request) => {
+  if (!request.auth) {
+    throw new HttpsError(
+      "unauthenticated", "User must be authenticated");
+  }
 
-// // 2. Stripe Webhook Handler (v1)
-// export const handleStripeWebhook = functions.https.onRequest(
-//   async (req, res) => {
-//     // Wrap the handler with CORS
-//     return corsHandler(req, res, async () => {
-//       const sig = req.headers["stripe-signature"] as string;
-//       let event: Stripe.Event;
-//       try {
-//         event = stripe.webhooks.constructEvent(
-//           req.rawBody,
-//           sig,
-//           functions.config().stripe.webhook_secret
-//         );
-//       } catch (err) {
-//         const error = err as Error;
-//         console.error("Webhook signature verification failed.",
-//         error.message);
-//         res.status(400).send(`Webhook Error: ${error.message}`);
-//         return;
-//       }
+  // Add debug logging
+  console.log("Debug - Available secrets:", {
+    hasStripeKey: !!stripeSecretKey.value(),
+    hasPriceId: !!stripePriceId.value(),
+    priceId: stripePriceId.value(),
+    envKeys: Object.keys(process.env),
+  });
 
-//       // Handle subscription events
-//       if (event.type === "checkout.session.completed") {
-//         const session = event.data.object as Stripe.Checkout.Session;
-//         const uid = session.client_reference_id;
-//         if (uid) {
-//           await admin.database().ref(`users/${uid}/isSubscribed`).set(true);
-//         }
-//       }
-//       if (event.type === "customer.subscription.deleted") {
-//         // Optionally handle subscription cancellation
-//         // You may want to look up the user by Stripe customer
-//         // ID if you store it
-//       }
+  const stripe = new Stripe(stripeSecretKey.value(), {
+    apiVersion: "2025-04-30.basil" as Stripe.LatestApiVersion,
+    typescript: true,
+  });
 
-//       res.json({received: true});
-//     });
-//   });
+  const uid = request.auth.uid;
+  const session = await stripe.checkout.sessions.create({
+    payment_method_types: ["card"],
+    mode: "subscription",
+    line_items: [
+      {
+        price: stripePriceId.value(),
+        quantity: 1,
+      },
+    ],
+    success_url: "https://study.noahgdorfman.com/success",
+    cancel_url: "https://study.noahgdorfman.com/cancel",
+    client_reference_id: uid,
+    customer_email: request.auth.token.email,
+  });
+  return {sessionId: session.id};
+});
+
+// 2. Stripe Webhook Handler (v1)
+export const handleStripeWebhook = onRequest({
+  secrets: [stripeSecretKey, stripeWebhookSecret],
+}, async (req, res) => {
+  // Wrap the handler with CORS
+  return corsHandler(req, res, async () => {
+    console.log("Webhook received:", {
+      method: req.method,
+      headers: req.headers,
+      hasBody: !!req.body,
+      bodyLength: req.body?.length,
+      signature: req.headers["stripe-signature"],
+    });
+
+    const stripe = new Stripe(stripeSecretKey.value(), {
+      apiVersion: "2025-04-30.basil" as Stripe.LatestApiVersion,
+      typescript: true,
+    });
+
+    const sig = req.headers["stripe-signature"] as string;
+    let event: Stripe.Event;
+    try {
+      event = stripe.webhooks.constructEvent(
+        req.rawBody,
+        sig,
+        stripeWebhookSecret.value()
+      );
+      console.log("Webhook event constructed:", {
+        type: event.type,
+        id: event.id,
+      });
+    } catch (err) {
+      const error = err as Error;
+      console.error("Webhook signature verification failed:", {
+        error: error.message,
+        signature: sig,
+        hasWebhookSecret: !!stripeWebhookSecret.value(),
+      });
+      res.status(400).send(`Webhook Error: ${error.message}`);
+      return;
+    }
+
+    // Handle subscription events
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object as Stripe.Checkout.Session;
+      const uid = session.client_reference_id;
+      console.log("Processing checkout.session.completed:", {
+        uid,
+        sessionId: session.id,
+        customerId: session.customer,
+      });
+
+      if (uid) {
+        try {
+          await admin.database().ref(`users/${uid}/isSubscribed`).set(true);
+          console.log("Successfully updated subscription status for user:",
+            uid);
+        } catch (err) {
+          console.error("Failed to update subscription status:", err);
+          res.status(500).send("Failed to update subscription status");
+          return;
+        }
+      } else {
+        console.error("No user ID found in session:", session);
+      }
+    }
+    if (event.type === "customer.subscription.deleted") {
+      console.log("Processing customer.subscription.deleted:",
+        event.data.object);
+      // Optionally handle subscription cancellation
+      // You may want to look up the user by Stripe customer
+      // ID if you store it
+    }
+
+    res.json({received: true});
+  });
+});
 
 // Flashcard Generation Function (v2)
 export const generateFlashcards = onRequest({
@@ -196,8 +246,8 @@ export const generateFlashcards = onRequest({
       const firstBracket = raw.indexOf("[");
       const lastBracket = raw.lastIndexOf("]");
       if (firstBracket !== -1 &&
-                lastBracket !== -1 &&
-                lastBracket > firstBracket) {
+        lastBracket !== -1 &&
+        lastBracket > firstBracket) {
         raw = raw.substring(firstBracket,
           lastBracket + 1);
       }
@@ -205,9 +255,9 @@ export const generateFlashcards = onRequest({
       let flashcards;
       try {
         flashcards = JSON.parse(raw) as Array<{
-                    question: string;
-                    answer: string
-                }>;
+          question: string;
+          answer: string
+        }>;
       } catch (e) {
         res.status(500).json(
           {
@@ -231,3 +281,18 @@ export const generateFlashcards = onRequest({
     }
   });
 });
+
+// // Test function to check all secrets
+// export const testSecrets = onCall({
+//   secrets: [stripeSecretKey, stripePriceId,
+//     stripeWebhookSecret, anthropicApiKey],
+// }, async () => {
+//   return {
+//     stripeKey: !!stripeSecretKey.value(),
+//     priceId: !!stripePriceId.value(),
+//     webhookSecret: !!stripeWebhookSecret.value(),
+//     anthropicKey: !!anthropicApiKey.value(),
+//     priceIdValue: stripePriceId.value(),
+//     envKeys: Object.keys(process.env),
+//   };
+// });

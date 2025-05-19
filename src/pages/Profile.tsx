@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { Box, Typography, TextField, Button, Alert, CircularProgress } from '@mui/material';
+import { Box, Typography, TextField, Button, Alert, CircularProgress, Divider } from '@mui/material';
 import { useAuth } from '../context/AuthContext';
 import { database } from '../services/firebase';
 import { ref, get, set } from 'firebase/database';
 import Paper from '@mui/material/Paper';
+import { getFunctions, httpsCallable } from 'firebase/functions';
+import { loadStripe } from '@stripe/stripe-js';
 
 const Profile: React.FC = () => {
     const { user } = useAuth();
@@ -12,16 +14,27 @@ const Profile: React.FC = () => {
     const [success, setSuccess] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [initialLoading, setInitialLoading] = useState(true);
+    const [isSubscribed, setIsSubscribed] = useState(false);
+    const [checkoutLoading, setCheckoutLoading] = useState(false);
 
     useEffect(() => {
         if (user) {
             setInitialLoading(true);
+            // Load Anthropic key
             const keyRef = ref(database, `users/${user.uid}/anthropicKey`);
             get(keyRef)
                 .then((snapshot) => {
                     if (snapshot.exists()) {
                         setAnthropicKey(snapshot.val());
                     }
+                })
+                .catch(() => { });
+
+            // Load subscription status
+            const subRef = ref(database, `users/${user.uid}/isSubscribed`);
+            get(subRef)
+                .then((snapshot) => {
+                    setIsSubscribed(snapshot.exists() && snapshot.val());
                 })
                 .catch(() => { })
                 .finally(() => setInitialLoading(false));
@@ -45,6 +58,40 @@ const Profile: React.FC = () => {
         }
     };
 
+    const handleCheckout = async () => {
+        if (!user) return;
+        setCheckoutLoading(true);
+        setError(null);
+        try {
+            const publishableKey = process.env.REACT_APP_STRIPE_PUBLISHABLE_KEY;
+            if (!publishableKey) {
+                throw new Error('Stripe publishable key is not configured');
+            }
+
+            const functions = getFunctions();
+            const createCheckoutSession = httpsCallable(functions, 'createCheckoutSession');
+            const { data } = await createCheckoutSession();
+            const { sessionId } = data as { sessionId: string };
+
+            // Initialize Stripe
+            const stripe = await loadStripe(publishableKey);
+            if (!stripe) {
+                throw new Error('Failed to initialize Stripe');
+            }
+
+            // Redirect to Stripe Checkout
+            const { error } = await stripe.redirectToCheckout({ sessionId });
+            if (error) {
+                throw error;
+            }
+        } catch (err: any) {
+            setError(err.message || 'Failed to start checkout process.');
+            console.error('Checkout error:', err);
+        } finally {
+            setCheckoutLoading(false);
+        }
+    };
+
     if (!user) {
         return <Typography variant="h6">You must be logged in to view this page.</Typography>;
     }
@@ -58,6 +105,30 @@ const Profile: React.FC = () => {
             <Paper elevation={3} sx={{ p: { xs: 2, sm: 4 }, borderRadius: 4, boxShadow: '0 4px 24px 0 rgba(10,60,47,0.10)', bgcolor: '#fff' }}>
                 <Typography variant="h5" gutterBottom sx={{ fontWeight: 700, color: 'primary.main', textAlign: 'center' }}>Profile</Typography>
                 <Typography variant="body1" gutterBottom sx={{ color: 'text.secondary', textAlign: 'center' }}>Email: {user.email}</Typography>
+
+                {/* Subscription Status */}
+                <Box sx={{ mt: 4, mb: 3 }}>
+                    <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>Subscription Status</Typography>
+                    <Typography variant="body1" sx={{ color: isSubscribed ? 'success.main' : 'text.secondary' }}>
+                        {isSubscribed ? 'Active Subscription' : 'No Active Subscription'}
+                    </Typography>
+                    {!isSubscribed && (
+                        <Button
+                            variant="contained"
+                            color="primary"
+                            onClick={handleCheckout}
+                            disabled={checkoutLoading}
+                            sx={{ mt: 2, px: 4, py: 1.5, borderRadius: 3, fontWeight: 700 }}
+                        >
+                            {checkoutLoading ? <CircularProgress size={24} /> : 'Subscribe Now'}
+                        </Button>
+                    )}
+                </Box>
+
+                <Divider sx={{ my: 3 }} />
+
+                {/* API Key Section */}
+                <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>API Settings</Typography>
                 <form onSubmit={handleSave}>
                     <TextField
                         label="Anthropic API Key"
