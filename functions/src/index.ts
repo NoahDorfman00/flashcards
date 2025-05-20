@@ -12,9 +12,9 @@
 // import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import Stripe from "stripe";
-import {onRequest} from "firebase-functions/v2/https";
+import { onRequest } from "firebase-functions/v2/https";
 import Anthropic from "@anthropic-ai/sdk";
-import {defineSecret} from "firebase-functions/params";
+import { defineSecret } from "firebase-functions/params";
 import * as cors from "cors";
 
 // Start writing functions
@@ -85,7 +85,7 @@ export const createCheckoutSession = onRequest({
 
       if (!authHeader?.startsWith("Bearer ")) {
         console.log("Unauthorized: Invalid auth header format");
-        res.status(401).json({error: "Unauthorized"});
+        res.status(401).json({ error: "Unauthorized" });
         return;
       }
 
@@ -193,7 +193,7 @@ export const createCheckoutSession = onRequest({
           customerId: session.customer,
         });
 
-        res.json({sessionId: session.id});
+        res.json({ sessionId: session.id });
       } catch (tokenError) {
         console.error("Token verification failed:", {
           error: tokenError,
@@ -203,7 +203,7 @@ export const createCheckoutSession = onRequest({
           errorStack:
             tokenError instanceof Error ? tokenError.stack : undefined,
         });
-        res.status(401).json({error: "Invalid token"});
+        res.status(401).json({ error: "Invalid token" });
       }
     } catch (error) {
       console.error("Error creating checkout session:", {
@@ -211,7 +211,7 @@ export const createCheckoutSession = onRequest({
         errorMessage: error instanceof Error ? error.message : "Unknown error",
         errorStack: error instanceof Error ? error.stack : undefined,
       });
-      res.status(500).json({error: "Failed to create checkout session"});
+      res.status(500).json({ error: "Failed to create checkout session" });
     }
   });
 });
@@ -226,19 +226,29 @@ export const cancelSubscription = onRequest({
       // Get the auth token from the Authorization header
       const authHeader = req.headers.authorization;
       if (!authHeader?.startsWith("Bearer ")) {
-        res.status(401).json({error: "Unauthorized"});
+        console.log("Unauthorized: Invalid auth header format");
+        res.status(401).json({ error: "Unauthorized" });
         return;
       }
 
       const idToken = authHeader.split("Bearer ")[1];
       const decodedToken = await admin.auth().verifyIdToken(idToken);
       const uid = decodedToken.uid;
+      console.log("User authenticated:", { uid, email: decodedToken.email });
 
       // Get the Stripe customer ID from Firebase
       const customerIdRef = await admin.database()
         .ref(`users/${uid}/stripeCustomerId`).get();
+
+      console.log("Firebase customer lookup result:", {
+        exists: customerIdRef.exists(),
+        value: customerIdRef.val(),
+        path: `users/${uid}/stripeCustomerId`
+      });
+
       if (!customerIdRef.exists()) {
-        res.status(404).json({error: "No Stripe customer found"});
+        console.log("No Stripe customer found for user:", uid);
+        res.status(404).json({ error: "No Stripe customer found" });
         return;
       }
       const customerId = customerIdRef.val();
@@ -249,18 +259,31 @@ export const cancelSubscription = onRequest({
       });
 
       // Get the active subscription
+      console.log("Looking up active subscriptions for customer:", customerId);
       const subscriptions = await stripe.subscriptions.list({
         customer: customerId,
         status: "active",
         limit: 1,
       });
 
+      console.log("Subscription lookup results:", {
+        foundSubscriptions: subscriptions.data.length,
+        firstSubscriptionId: subscriptions.data[0]?.id,
+        status: subscriptions.data[0]?.status
+      });
+
       if (subscriptions.data.length === 0) {
-        res.status(404).json({error: "No active subscription found"});
+        console.log("No active subscription found for customer:", customerId);
+        res.status(404).json({ error: "No active subscription found" });
         return;
       }
 
       const subscription = subscriptions.data[0];
+      console.log("Found active subscription:", {
+        id: subscription.id,
+        status: subscription.status,
+        currentPeriodEnd: new Date(subscription.current_period_end * 1000).toISOString()
+      });
 
       // Cancel the subscription at period end
       await stripe.subscriptions.update(subscription.id, {
@@ -271,10 +294,19 @@ export const cancelSubscription = onRequest({
       await admin.database().ref(`users/${uid}/subscriptionStatus`)
         .set("pending_cancellation");
 
-      res.json({success: true});
+      console.log("Successfully cancelled subscription:", {
+        subscriptionId: subscription.id,
+        userId: uid
+      });
+
+      res.json({ success: true });
     } catch (error) {
-      console.error("Error canceling subscription:", error);
-      res.status(500).json({error: "Failed to cancel subscription"});
+      console.error("Error canceling subscription:", {
+        error,
+        errorMessage: error instanceof Error ? error.message : "Unknown error",
+        errorStack: error instanceof Error ? error.stack : undefined
+      });
+      res.status(500).json({ error: "Failed to cancel subscription" });
     }
   });
 });
@@ -289,7 +321,7 @@ export const reactivateSubscription = onRequest({
       // Get the auth token from the Authorization header
       const authHeader = req.headers.authorization;
       if (!authHeader?.startsWith("Bearer ")) {
-        res.status(401).json({error: "Unauthorized"});
+        res.status(401).json({ error: "Unauthorized" });
         return;
       }
 
@@ -301,7 +333,7 @@ export const reactivateSubscription = onRequest({
       const customerIdRef = await admin.database()
         .ref(`users/${uid}/stripeCustomerId`).get();
       if (!customerIdRef.exists()) {
-        res.status(404).json({error: "No Stripe customer found"});
+        res.status(404).json({ error: "No Stripe customer found" });
         return;
       }
       const customerId = customerIdRef.val();
@@ -319,7 +351,7 @@ export const reactivateSubscription = onRequest({
       });
 
       if (subscriptions.data.length === 0) {
-        res.status(404).json({error: "No active subscription found"});
+        res.status(404).json({ error: "No active subscription found" });
         return;
       }
 
@@ -334,10 +366,10 @@ export const reactivateSubscription = onRequest({
       await admin.database().ref(`users/${uid}/subscriptionStatus`)
         .set("subscribed");
 
-      res.json({success: true});
+      res.json({ success: true });
     } catch (error) {
       console.error("Error reactivating subscription:", error);
-      res.status(500).json({error: "Failed to reactivate subscription"});
+      res.status(500).json({ error: "Failed to reactivate subscription" });
     }
   });
 });
@@ -484,7 +516,7 @@ export const handleStripeWebhook = onRequest({
       }
     }
 
-    res.json({received: true});
+    res.json({ received: true });
   });
 });
 
@@ -516,14 +548,14 @@ export const generateFlashcards = onRequest({
   // Handle CORS for actual request
   return corsHandler(req, res, async () => {
     try {
-      const {topic, count = 10, apiKey} = req.body;
+      const { topic, count = 10, apiKey } = req.body;
 
       console.log("Parsed request body:",
-        {topic, count, apiKey: apiKey ? "present" : "not present"});
+        { topic, count, apiKey: apiKey ? "present" : "not present" });
 
       if (!topic) {
         console.error("Topic is missing from request");
-        res.status(400).json({error: "Topic is required"});
+        res.status(400).json({ error: "Topic is required" });
         return;
       }
 
@@ -531,7 +563,7 @@ export const generateFlashcards = onRequest({
       const anthropicKey = apiKey || anthropicApiKey.value();
 
       if (!anthropicKey) {
-        res.status(500).json({error: "No API key available"});
+        res.status(500).json({ error: "No API key available" });
         return;
       }
 
@@ -590,10 +622,10 @@ export const generateFlashcards = onRequest({
         createdAt: Date.now(),
       }));
 
-      res.json({flashcards: formattedFlashcards});
+      res.json({ flashcards: formattedFlashcards });
     } catch (error) {
       console.error("Error generating flashcards:", error);
-      res.status(500).json({error: "Failed to generate flashcards"});
+      res.status(500).json({ error: "Failed to generate flashcards" });
     }
   });
 });
