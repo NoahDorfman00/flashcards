@@ -175,6 +175,68 @@ export const cancelSubscription = onRequest({
   });
 });
 
+// Add new cloud function for subscription reactivation
+export const reactivateSubscription = onRequest({
+  secrets: [stripeSecretKey],
+  cors: false,
+}, async (req, res) => {
+  return corsHandler(req, res, async () => {
+    try {
+      // Get the auth token from the Authorization header
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith("Bearer ")) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+
+      const idToken = authHeader.split("Bearer ")[1];
+      const decodedToken = await admin.auth().verifyIdToken(idToken);
+
+      const stripe = new Stripe(stripeSecretKey.value(), {
+        apiVersion: "2025-04-30.basil" as Stripe.LatestApiVersion,
+        typescript: true,
+      });
+
+      // Get the customer ID for the user
+      const customers = await stripe.customers.list({
+        email: decodedToken.email,
+        limit: 1,
+      });
+
+      if (customers.data.length === 0) {
+        res.status(404).json({ error: "No subscription found" });
+        return;
+      }
+
+      const customer = customers.data[0];
+
+      // Get the subscription that's pending cancellation
+      const subscriptions = await stripe.subscriptions.list({
+        customer: customer.id,
+        status: "active",
+        limit: 1,
+      });
+
+      if (subscriptions.data.length === 0) {
+        res.status(404).json({ error: "No active subscription found" });
+        return;
+      }
+
+      const subscription = subscriptions.data[0];
+
+      // Reactivate the subscription by removing the cancel_at_period_end flag
+      await stripe.subscriptions.update(subscription.id, {
+        cancel_at_period_end: false,
+      });
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error reactivating subscription:", error);
+      res.status(500).json({ error: "Failed to reactivate subscription" });
+    }
+  });
+});
+
 // 2. Stripe Webhook Handler (v1)
 export const handleStripeWebhook = onRequest({
   secrets: [stripeSecretKey, stripeWebhookSecret],

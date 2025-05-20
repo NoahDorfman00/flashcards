@@ -144,6 +144,35 @@ const Profile: React.FC = () => {
         }
     };
 
+    const handleReactivateSubscription = async () => {
+        if (!user) return;
+        setCancelling(true);
+        setError(null);
+        try {
+            const idToken = await user.getIdToken();
+
+            const response = await fetch('https://us-central1-flashcards-d25b9.cloudfunctions.net/reactivateSubscription', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${idToken}`,
+                    'Content-Type': 'application/json',
+                },
+                credentials: 'include',
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to reactivate subscription');
+            }
+
+            setCancellationPending(false);
+        } catch (err: any) {
+            setError(err.message || 'Failed to reactivate subscription.');
+            console.error('Reactivate subscription error:', err);
+        } finally {
+            setCancelling(false);
+        }
+    };
+
     if (!user) {
         return <Typography variant="h6">You must be logged in to view this page.</Typography>;
     }
@@ -189,7 +218,19 @@ const Profile: React.FC = () => {
                                 {checkoutLoading ? <CircularProgress size={24} /> : 'Subscribe Now'}
                             </Button>
                         </Box>
-                    ) : !cancellationPending && (
+                    ) : cancellationPending ? (
+                        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
+                            <Button
+                                variant="contained"
+                                color="primary"
+                                onClick={handleReactivateSubscription}
+                                disabled={cancelling}
+                                sx={{ px: 4, py: 1.5, borderRadius: 3, fontWeight: 700 }}
+                            >
+                                {cancelling ? <CircularProgress size={24} /> : 'Keep Subscription'}
+                            </Button>
+                        </Box>
+                    ) : (
                         <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
                             <Button
                                 variant="outlined"
