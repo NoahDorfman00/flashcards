@@ -108,14 +108,14 @@ const Profile: React.FC = () => {
 
             // Call the createCheckoutSession function
             console.log("Making request to create checkout session...", {
-                url: 'https://createcheckoutsession-n3crmlorra-uc.a.run.app',
+                url: 'https://us-central1-flashcards-d25b9.cloudfunctions.net/createCheckoutSession',
                 headers: {
                     'Authorization': `Bearer ${idToken.substring(0, 10)}...`,
                     'Content-Type': 'application/json',
                 },
                 credentials: 'include',
             });
-            const response = await fetch('https://createcheckoutsession-n3crmlorra-uc.a.run.app', {
+            const response = await fetch('https://us-central1-flashcards-d25b9.cloudfunctions.net/createCheckoutSession', {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${idToken}`,
@@ -174,7 +174,7 @@ const Profile: React.FC = () => {
         try {
             const idToken = await user.getIdToken();
 
-            const response = await fetch('https://cancelsubscription-n3crmlorra-uc.a.run.app', {
+            const response = await fetch('https://us-central1-flashcards-d25b9.cloudfunctions.net/cancelSubscription', {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${idToken}`,
@@ -204,7 +204,7 @@ const Profile: React.FC = () => {
         try {
             const idToken = await user.getIdToken();
 
-            const response = await fetch('https://reactivatesubscription-n3crmlorra-uc.a.run.app', {
+            const response = await fetch('https://us-central1-flashcards-d25b9.cloudfunctions.net/reactivateSubscription', {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${idToken}`,

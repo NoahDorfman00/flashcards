@@ -52,158 +52,168 @@ const corsHandler = cors({
   methods: ["POST", "OPTIONS"],
   credentials: true,
   allowedHeaders: ["Content-Type", "Authorization"],
+  preflightContinue: false,
+  optionsSuccessStatus: 204,
 });
 
 // 1. Create Checkout Session (v2)
 export const createCheckoutSession = onRequest({
   secrets: [stripeSecretKey, stripePriceId],
-  cors: true,
+  cors: false,
 }, async (req, res) => {
-  console.log("Create checkout session request received:", {
-    method: req.method,
-    headers: req.headers,
-    origin: req.headers.origin,
-    body: req.body,
-    url: req.url,
-    path: req.path,
-  });
-
-  try {
-    // Get the auth token from the Authorization header
-    const authHeader = req.headers.authorization;
-    console.log("Auth header received:", {
-      hasHeader: !!authHeader,
-      startsWithBearer: authHeader?.startsWith("Bearer "),
-      headerValue: authHeader ? `${authHeader.substring(0, 20)}...` : null,
-      allHeaders: req.headers,
-    });
-
-    if (!authHeader?.startsWith("Bearer ")) {
-      console.log("Unauthorized: Invalid auth header format");
-      res.status(401).json({error: "Unauthorized"});
-      return;
-    }
-
-    const idToken = authHeader.split("Bearer ")[1];
-    console.log("Decoding ID token...", {
-      tokenLength: idToken.length,
-      tokenPrefix: idToken.substring(0, 10) + "...",
-      tokenParts: idToken.split(".").length, // Should be 3 for a valid JWT
-      tokenExpiry:
-        new Date(
-          JSON.parse(atob(idToken.split(".")[1])).exp * 1000).toISOString(),
-      currentTime: new Date().toISOString(),
-    });
-
-    try {
-      console.log("Verifying ID token...");
-      // First check if the token is a valid JWT format
-      if (idToken.split(".").length !== 3) {
-        throw new Error("Invalid token format: not a valid JWT");
-      }
-
-      const decodedToken = await admin.auth().verifyIdToken(idToken, true);
-      // Check if token is revoked
-      console.log("Token verified successfully:", {
-        uid: decodedToken.uid,
-        email: decodedToken.email,
-        auth_time: decodedToken.auth_time,
-        exp: decodedToken.exp,
-        iat: decodedToken.iat,
-        token_valid: decodedToken.exp > Date.now() / 1000,
-        current_time: Date.now() / 1000,
-        time_until_expiry: decodedToken.exp - (Date.now() / 1000),
-      });
-
-      if (!decodedToken.email) {
-        throw new Error("Token does not contain email");
-      }
-
-      const uid = decodedToken.uid;
-      console.log("Token decoded successfully:", {
-        uid,
-        email: decodedToken.email,
-      });
-
-      console.log("Initializing Stripe...");
-      const stripe = new Stripe(stripeSecretKey.value(), {
-        apiVersion: "2025-04-30.basil" as Stripe.LatestApiVersion,
-        typescript: true,
-      });
-
-      // First, create or retrieve the customer
-      console.log("Looking up existing customer...");
-      const customers = await stripe.customers.list({
-        email: decodedToken.email,
-        limit: 1,
-      });
-      console.log("Customer lookup results:", {
-        foundCustomers: customers.data.length,
-        firstCustomerId: customers.data[0]?.id,
-      });
-
-      let customer;
-      if (customers.data.length > 0) {
-        customer = customers.data[0];
-        console.log("Using existing customer:", {
-          id: customer.id,
-          email: customer.email,
-        });
-      } else {
-        console.log("Creating new customer...");
-        customer = await stripe.customers.create({
-          email: decodedToken.email,
-          metadata: {
-            firebaseUID: uid,
-          },
-        });
-        console.log("New customer created:", {
-          id: customer.id,
-          email: customer.email,
-        });
-      }
-
-      console.log("Creating checkout session...");
-      const session = await stripe.checkout.sessions.create({
-        payment_method_types: ["card"],
-        mode: "subscription",
-        customer: customer.id,
-        line_items: [
-          {
-            price: stripePriceId.value(),
-            quantity: 1,
-          },
-        ],
-        success_url: "https://study.noahgdorfman.com/success",
-        cancel_url: "https://study.noahgdorfman.com/cancel",
-        client_reference_id: uid,
-        customer_email: decodedToken.email,
-      });
-      console.log("Checkout session created:", {
-        sessionId: session.id,
-        customerId: session.customer,
-      });
-
-      res.json({sessionId: session.id});
-    } catch (tokenError) {
-      console.error("Token verification failed:", {
-        error: tokenError,
-        errorMessage:
-          tokenError instanceof Error ? tokenError.message :
-            "Unknown error",
-        errorStack:
-          tokenError instanceof Error ? tokenError.stack : undefined,
-      });
-      res.status(401).json({error: "Invalid token"});
-    }
-  } catch (error) {
-    console.error("Error creating checkout session:", {
-      error,
-      errorMessage: error instanceof Error ? error.message : "Unknown error",
-      errorStack: error instanceof Error ? error.stack : undefined,
-    });
-    res.status(500).json({error: "Failed to create checkout session"});
+  // Handle preflight requests
+  if (req.method === "OPTIONS") {
+    res.set("Access-Control-Allow-Origin", req.headers.origin || "https://study.noahgdorfman.com");
+    res.set("Access-Control-Allow-Methods", "POST, OPTIONS");
+    res.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    res.set("Access-Control-Allow-Credentials", "true");
+    res.status(204).send("");
+    return;
   }
+
+  // Use the cors middleware
+  return corsHandler(req, res, async () => {
+    try {
+      // Get the auth token from the Authorization header
+      const authHeader = req.headers.authorization;
+      console.log("Auth header received:", {
+        hasHeader: !!authHeader,
+        startsWithBearer: authHeader?.startsWith("Bearer "),
+        headerValue: authHeader ? `${authHeader.substring(0, 20)}...` : null,
+        allHeaders: req.headers,
+      });
+
+      if (!authHeader?.startsWith("Bearer ")) {
+        console.log("Unauthorized: Invalid auth header format");
+        res.status(401).json({error: "Unauthorized"});
+        return;
+      }
+
+      const idToken = authHeader.split("Bearer ")[1];
+      console.log("Decoding ID token...", {
+        tokenLength: idToken.length,
+        tokenPrefix: idToken.substring(0, 10) + "...",
+        tokenParts: idToken.split(".").length, // Should be 3 for a valid JWT
+        tokenExpiry:
+          new Date(
+            JSON.parse(atob(idToken.split(".")[1])).exp * 1000).toISOString(),
+        currentTime: new Date().toISOString(),
+      });
+
+      try {
+        console.log("Verifying ID token...");
+        // First check if the token is a valid JWT format
+        if (idToken.split(".").length !== 3) {
+          throw new Error("Invalid token format: not a valid JWT");
+        }
+
+        const decodedToken = await admin.auth().verifyIdToken(idToken, true);
+        // Check if token is revoked
+        console.log("Token verified successfully:", {
+          uid: decodedToken.uid,
+          email: decodedToken.email,
+          auth_time: decodedToken.auth_time,
+          exp: decodedToken.exp,
+          iat: decodedToken.iat,
+          token_valid: decodedToken.exp > Date.now() / 1000,
+          current_time: Date.now() / 1000,
+          time_until_expiry: decodedToken.exp - (Date.now() / 1000),
+        });
+
+        if (!decodedToken.email) {
+          throw new Error("Token does not contain email");
+        }
+
+        const uid = decodedToken.uid;
+        console.log("Token decoded successfully:", {
+          uid,
+          email: decodedToken.email,
+        });
+
+        console.log("Initializing Stripe...");
+        const stripe = new Stripe(stripeSecretKey.value(), {
+          apiVersion: "2025-04-30.basil" as Stripe.LatestApiVersion,
+          typescript: true,
+        });
+
+        // First, create or retrieve the customer
+        console.log("Looking up existing customer...");
+        const customers = await stripe.customers.list({
+          email: decodedToken.email,
+          limit: 1,
+        });
+        console.log("Customer lookup results:", {
+          foundCustomers: customers.data.length,
+          firstCustomerId: customers.data[0]?.id,
+        });
+
+        let customer;
+        if (customers.data.length > 0) {
+          customer = customers.data[0];
+          console.log("Using existing customer:", {
+            id: customer.id,
+            email: customer.email,
+          });
+        } else {
+          console.log("Creating new customer...");
+          customer = await stripe.customers.create({
+            email: decodedToken.email,
+            metadata: {
+              firebaseUID: uid,
+            },
+          });
+          console.log("New customer created:", {
+            id: customer.id,
+            email: customer.email,
+          });
+
+          // Store the Stripe customer ID in Firebase
+          await admin.database().
+            ref(`users/${uid}/stripeCustomerId`).set(customer.id);
+          console.log("Stored Stripe customer ID in Firebase:", customer.id);
+        }
+
+        console.log("Creating checkout session...");
+        const session = await stripe.checkout.sessions.create({
+          payment_method_types: ["card"],
+          mode: "subscription",
+          customer: customer.id,
+          line_items: [
+            {
+              price: stripePriceId.value(),
+              quantity: 1,
+            },
+          ],
+          success_url: "https://study.noahgdorfman.com/success",
+          cancel_url: "https://study.noahgdorfman.com/cancel",
+          client_reference_id: uid,
+        });
+        console.log("Checkout session created:", {
+          sessionId: session.id,
+          customerId: session.customer,
+        });
+
+        res.json({sessionId: session.id});
+      } catch (tokenError) {
+        console.error("Token verification failed:", {
+          error: tokenError,
+          errorMessage:
+            tokenError instanceof Error ? tokenError.message :
+              "Unknown error",
+          errorStack:
+            tokenError instanceof Error ? tokenError.stack : undefined,
+        });
+        res.status(401).json({error: "Invalid token"});
+      }
+    } catch (error) {
+      console.error("Error creating checkout session:", {
+        error,
+        errorMessage: error instanceof Error ? error.message : "Unknown error",
+        errorStack: error instanceof Error ? error.stack : undefined,
+      });
+      res.status(500).json({error: "Failed to create checkout session"});
+    }
+  });
 });
 
 // Add new cloud function for subscription cancellation
@@ -224,27 +234,23 @@ export const cancelSubscription = onRequest({
       const decodedToken = await admin.auth().verifyIdToken(idToken);
       const uid = decodedToken.uid;
 
+      // Get the Stripe customer ID from Firebase
+      const customerIdRef = await admin.database()
+        .ref(`users/${uid}/stripeCustomerId`).get();
+      if (!customerIdRef.exists()) {
+        res.status(404).json({error: "No Stripe customer found"});
+        return;
+      }
+      const customerId = customerIdRef.val();
+
       const stripe = new Stripe(stripeSecretKey.value(), {
         apiVersion: "2025-04-30.basil" as Stripe.LatestApiVersion,
         typescript: true,
       });
 
-      // Get the customer ID for the user
-      const customers = await stripe.customers.list({
-        email: decodedToken.email,
-        limit: 1,
-      });
-
-      if (customers.data.length === 0) {
-        res.status(404).json({error: "No subscription found"});
-        return;
-      }
-
-      const customer = customers.data[0];
-
       // Get the active subscription
       const subscriptions = await stripe.subscriptions.list({
-        customer: customer.id,
+        customer: customerId,
         status: "active",
         limit: 1,
       });
@@ -291,27 +297,23 @@ export const reactivateSubscription = onRequest({
       const decodedToken = await admin.auth().verifyIdToken(idToken);
       const uid = decodedToken.uid;
 
+      // Get the Stripe customer ID from Firebase
+      const customerIdRef = await admin.database()
+        .ref(`users/${uid}/stripeCustomerId`).get();
+      if (!customerIdRef.exists()) {
+        res.status(404).json({error: "No Stripe customer found"});
+        return;
+      }
+      const customerId = customerIdRef.val();
+
       const stripe = new Stripe(stripeSecretKey.value(), {
         apiVersion: "2025-04-30.basil" as Stripe.LatestApiVersion,
         typescript: true,
       });
 
-      // Get the customer ID for the user
-      const customers = await stripe.customers.list({
-        email: decodedToken.email,
-        limit: 1,
-      });
-
-      if (customers.data.length === 0) {
-        res.status(404).json({error: "No subscription found"});
-        return;
-      }
-
-      const customer = customers.data[0];
-
       // Get the subscription that's pending cancellation
       const subscriptions = await stripe.subscriptions.list({
-        customer: customer.id,
+        customer: customerId,
         status: "active",
         limit: 1,
       });
