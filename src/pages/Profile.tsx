@@ -21,6 +21,7 @@ const Profile: React.FC = () => {
     const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
     const [showCancelDialog, setShowCancelDialog] = useState(false);
     const [cancelling, setCancelling] = useState(false);
+    const [cancellationPending, setCancellationPending] = useState(false);
 
     useEffect(() => {
         if (user) {
@@ -40,6 +41,8 @@ const Profile: React.FC = () => {
             get(subRef)
                 .then((snapshot) => {
                     setIsSubscribed(snapshot.exists() && snapshot.val());
+                    // Reset cancellation pending state when subscription status changes
+                    setCancellationPending(false);
                 })
                 .catch(() => { })
                 .finally(() => setInitialLoading(false));
@@ -131,7 +134,7 @@ const Profile: React.FC = () => {
                 throw new Error('Failed to cancel subscription');
             }
 
-            setIsSubscribed(false);
+            setCancellationPending(true);
             setShowCancelDialog(false);
         } catch (err: any) {
             setError(err.message || 'Failed to cancel subscription.');
@@ -158,9 +161,22 @@ const Profile: React.FC = () => {
                 {/* Subscription Status */}
                 <Box sx={{ mt: 4, mb: 3 }}>
                     <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>Subscription Status</Typography>
-                    <Typography variant="body1" sx={{ color: isSubscribed ? 'success.main' : 'text.secondary' }}>
-                        {isSubscribed ? 'Active Subscription' : 'No Active Subscription'}
+                    <Typography variant="body1" sx={{
+                        color: isSubscribed ? (cancellationPending ? 'warning.main' : 'success.main') : 'text.secondary',
+                        mb: 1
+                    }}>
+                        {isSubscribed
+                            ? (cancellationPending
+                                ? 'Subscription (Cancellation Pending)'
+                                : 'Active Subscription')
+                            : 'No Active Subscription'
+                        }
                     </Typography>
+                    {cancellationPending && (
+                        <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>
+                            Your subscription will remain active until the end of your current billing period.
+                        </Typography>
+                    )}
                     {!isSubscribed ? (
                         <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
                             <Button
@@ -173,7 +189,7 @@ const Profile: React.FC = () => {
                                 {checkoutLoading ? <CircularProgress size={24} /> : 'Subscribe Now'}
                             </Button>
                         </Box>
-                    ) : (
+                    ) : !cancellationPending && (
                         <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
                             <Button
                                 variant="outlined"

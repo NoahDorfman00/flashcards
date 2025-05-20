@@ -12,9 +12,9 @@
 // import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import Stripe from "stripe";
-import {onRequest} from "firebase-functions/v2/https";
+import { onRequest } from "firebase-functions/v2/https";
 import Anthropic from "@anthropic-ai/sdk";
-import {defineSecret} from "firebase-functions/params";
+import { defineSecret } from "firebase-functions/params";
 import * as cors from "cors";
 
 // Start writing functions
@@ -71,7 +71,7 @@ export const createCheckoutSession = onRequest({
       // Get the auth token from the Authorization header
       const authHeader = req.headers.authorization;
       if (!authHeader?.startsWith("Bearer ")) {
-        res.status(401).json({error: "Unauthorized"});
+        res.status(401).json({ error: "Unauthorized" });
         return;
       }
 
@@ -104,10 +104,10 @@ export const createCheckoutSession = onRequest({
         headers: res.getHeaders(),
       });
 
-      res.json({sessionId: session.id});
+      res.json({ sessionId: session.id });
     } catch (error) {
       console.error("Error creating checkout session:", error);
-      res.status(500).json({error: "Failed to create checkout session"});
+      res.status(500).json({ error: "Failed to create checkout session" });
     }
   });
 });
@@ -122,7 +122,7 @@ export const cancelSubscription = onRequest({
       // Get the auth token from the Authorization header
       const authHeader = req.headers.authorization;
       if (!authHeader?.startsWith("Bearer ")) {
-        res.status(401).json({error: "Unauthorized"});
+        res.status(401).json({ error: "Unauthorized" });
         return;
       }
 
@@ -142,7 +142,7 @@ export const cancelSubscription = onRequest({
       });
 
       if (customers.data.length === 0) {
-        res.status(404).json({error: "No subscription found"});
+        res.status(404).json({ error: "No subscription found" });
         return;
       }
 
@@ -156,7 +156,7 @@ export const cancelSubscription = onRequest({
       });
 
       if (subscriptions.data.length === 0) {
-        res.status(404).json({error: "No active subscription found"});
+        res.status(404).json({ error: "No active subscription found" });
         return;
       }
 
@@ -167,10 +167,10 @@ export const cancelSubscription = onRequest({
         cancel_at_period_end: true,
       });
 
-      res.json({success: true});
+      res.json({ success: true });
     } catch (error) {
       console.error("Error canceling subscription:", error);
-      res.status(500).json({error: "Failed to cancel subscription"});
+      res.status(500).json({ error: "Failed to cancel subscription" });
     }
   });
 });
@@ -294,7 +294,7 @@ export const handleStripeWebhook = onRequest({
       }
     }
 
-    res.json({received: true});
+    res.json({ received: true });
   });
 });
 
@@ -326,14 +326,14 @@ export const generateFlashcards = onRequest({
   // Handle CORS for actual request
   return corsHandler(req, res, async () => {
     try {
-      const {topic, count = 10, apiKey} = req.body;
+      const { topic, count = 10, apiKey } = req.body;
 
       console.log("Parsed request body:",
-        {topic, count, apiKey: apiKey ? "present" : "not present"});
+        { topic, count, apiKey: apiKey ? "present" : "not present" });
 
       if (!topic) {
         console.error("Topic is missing from request");
-        res.status(400).json({error: "Topic is required"});
+        res.status(400).json({ error: "Topic is required" });
         return;
       }
 
@@ -341,7 +341,7 @@ export const generateFlashcards = onRequest({
       const anthropicKey = apiKey || anthropicApiKey.value();
 
       if (!anthropicKey) {
-        res.status(500).json({error: "No API key available"});
+        res.status(500).json({ error: "No API key available" });
         return;
       }
 
@@ -400,10 +400,10 @@ export const generateFlashcards = onRequest({
         createdAt: Date.now(),
       }));
 
-      res.json({flashcards: formattedFlashcards});
+      res.json({ flashcards: formattedFlashcards });
     } catch (error) {
       console.error("Error generating flashcards:", error);
-      res.status(500).json({error: "Failed to generate flashcards"});
+      res.status(500).json({ error: "Failed to generate flashcards" });
     }
   });
 });
