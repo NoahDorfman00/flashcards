@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Box, Typography, TextField, Button, Alert, CircularProgress, Divider, Collapse, IconButton } from '@mui/material';
+import { Box, Typography, TextField, Button, Alert, CircularProgress, Divider, Collapse, IconButton, Dialog, DialogTitle, DialogContent, DialogActions } from '@mui/material';
 import { useAuth } from '../context/AuthContext';
 import { database } from '../services/firebase';
 import { ref, get, set } from 'firebase/database';
@@ -19,6 +19,8 @@ const Profile: React.FC = () => {
     const [isSubscribed, setIsSubscribed] = useState(false);
     const [checkoutLoading, setCheckoutLoading] = useState(false);
     const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
+    const [showCancelDialog, setShowCancelDialog] = useState(false);
+    const [cancelling, setCancelling] = useState(false);
 
     useEffect(() => {
         if (user) {
@@ -109,6 +111,36 @@ const Profile: React.FC = () => {
         }
     };
 
+    const handleCancelSubscription = async () => {
+        if (!user) return;
+        setCancelling(true);
+        setError(null);
+        try {
+            const idToken = await user.getIdToken();
+
+            const response = await fetch('https://us-central1-flashcards-d25b9.cloudfunctions.net/cancelSubscription', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${idToken}`,
+                    'Content-Type': 'application/json',
+                },
+                credentials: 'include',
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to cancel subscription');
+            }
+
+            setIsSubscribed(false);
+            setShowCancelDialog(false);
+        } catch (err: any) {
+            setError(err.message || 'Failed to cancel subscription.');
+            console.error('Cancel subscription error:', err);
+        } finally {
+            setCancelling(false);
+        }
+    };
+
     if (!user) {
         return <Typography variant="h6">You must be logged in to view this page.</Typography>;
     }
@@ -129,7 +161,7 @@ const Profile: React.FC = () => {
                     <Typography variant="body1" sx={{ color: isSubscribed ? 'success.main' : 'text.secondary' }}>
                         {isSubscribed ? 'Active Subscription' : 'No Active Subscription'}
                     </Typography>
-                    {!isSubscribed && (
+                    {!isSubscribed ? (
                         <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
                             <Button
                                 variant="contained"
@@ -139,6 +171,17 @@ const Profile: React.FC = () => {
                                 sx={{ px: 4, py: 1.5, borderRadius: 3, fontWeight: 700 }}
                             >
                                 {checkoutLoading ? <CircularProgress size={24} /> : 'Subscribe Now'}
+                            </Button>
+                        </Box>
+                    ) : (
+                        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
+                            <Button
+                                variant="outlined"
+                                color="error"
+                                onClick={() => setShowCancelDialog(true)}
+                                sx={{ px: 4, py: 1.5, borderRadius: 3, fontWeight: 700 }}
+                            >
+                                Cancel Subscription
                             </Button>
                         </Box>
                     )}
@@ -183,6 +226,29 @@ const Profile: React.FC = () => {
                         </Box>
                     </form>
                 </Collapse>
+
+                {/* Cancel Subscription Dialog */}
+                <Dialog open={showCancelDialog} onClose={() => setShowCancelDialog(false)}>
+                    <DialogTitle>Cancel Subscription</DialogTitle>
+                    <DialogContent>
+                        <Typography>
+                            Are you sure you want to cancel your subscription? You'll still have access until the end of your current billing period.
+                        </Typography>
+                    </DialogContent>
+                    <DialogActions>
+                        <Button onClick={() => setShowCancelDialog(false)} disabled={cancelling}>
+                            Keep Subscription
+                        </Button>
+                        <Button
+                            onClick={handleCancelSubscription}
+                            color="error"
+                            variant="contained"
+                            disabled={cancelling}
+                        >
+                            {cancelling ? <CircularProgress size={24} /> : 'Cancel Subscription'}
+                        </Button>
+                    </DialogActions>
+                </Dialog>
             </Paper>
         </Box>
     );
