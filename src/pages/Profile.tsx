@@ -121,6 +121,7 @@ const Profile: React.FC = () => {
                     'Authorization': `Bearer ${idToken}`,
                     'Content-Type': 'application/json',
                 },
+                mode: 'cors',
                 credentials: 'include',
             });
 
