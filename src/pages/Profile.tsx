@@ -9,6 +9,8 @@ import { loadStripe } from '@stripe/stripe-js';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 
+type SubscriptionStatus = 'subscribed' | 'pending_cancellation' | 'unsubscribed';
+
 const Profile: React.FC = () => {
     const { user } = useAuth();
     const [anthropicKey, setAnthropicKey] = useState('');
@@ -16,12 +18,11 @@ const Profile: React.FC = () => {
     const [success, setSuccess] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [initialLoading, setInitialLoading] = useState(true);
-    const [isSubscribed, setIsSubscribed] = useState(false);
+    const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus>('unsubscribed');
     const [checkoutLoading, setCheckoutLoading] = useState(false);
     const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
     const [showCancelDialog, setShowCancelDialog] = useState(false);
     const [cancelling, setCancelling] = useState(false);
-    const [cancellationPending, setCancellationPending] = useState(false);
 
     useEffect(() => {
         if (user) {
@@ -37,12 +38,14 @@ const Profile: React.FC = () => {
                 .catch(() => { });
 
             // Load subscription status
-            const subRef = ref(database, `users/${user.uid}/isSubscribed`);
+            const subRef = ref(database, `users/${user.uid}/subscriptionStatus`);
             get(subRef)
                 .then((snapshot) => {
-                    setIsSubscribed(snapshot.exists() && snapshot.val());
-                    // Reset cancellation pending state when subscription status changes
-                    setCancellationPending(false);
+                    if (snapshot.exists()) {
+                        setSubscriptionStatus(snapshot.val() as SubscriptionStatus);
+                    } else {
+                        setSubscriptionStatus('unsubscribed');
+                    }
                 })
                 .catch(() => { })
                 .finally(() => setInitialLoading(false));
@@ -134,7 +137,7 @@ const Profile: React.FC = () => {
                 throw new Error('Failed to cancel subscription');
             }
 
-            setCancellationPending(true);
+            setSubscriptionStatus('pending_cancellation');
             setShowCancelDialog(false);
         } catch (err: any) {
             setError(err.message || 'Failed to cancel subscription.');
@@ -164,7 +167,7 @@ const Profile: React.FC = () => {
                 throw new Error('Failed to reactivate subscription');
             }
 
-            setCancellationPending(false);
+            setSubscriptionStatus('subscribed');
         } catch (err: any) {
             setError(err.message || 'Failed to reactivate subscription.');
             console.error('Reactivate subscription error:', err);
@@ -191,22 +194,26 @@ const Profile: React.FC = () => {
                 <Box sx={{ mt: 4, mb: 3 }}>
                     <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>Subscription Status</Typography>
                     <Typography variant="body1" sx={{
-                        color: isSubscribed ? (cancellationPending ? 'warning.main' : 'success.main') : 'text.secondary',
+                        color: subscriptionStatus === 'subscribed'
+                            ? 'success.main'
+                            : subscriptionStatus === 'pending_cancellation'
+                                ? 'warning.main'
+                                : 'text.secondary',
                         mb: 1
                     }}>
-                        {isSubscribed
-                            ? (cancellationPending
+                        {subscriptionStatus === 'subscribed'
+                            ? 'Active Subscription'
+                            : subscriptionStatus === 'pending_cancellation'
                                 ? 'Subscription (Cancellation Pending)'
-                                : 'Active Subscription')
-                            : 'No Active Subscription'
+                                : 'No Active Subscription'
                         }
                     </Typography>
-                    {cancellationPending && (
+                    {subscriptionStatus === 'pending_cancellation' && (
                         <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>
                             Your subscription will remain active until the end of your current billing period.
                         </Typography>
                     )}
-                    {!isSubscribed ? (
+                    {subscriptionStatus === 'unsubscribed' ? (
                         <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
                             <Button
                                 variant="contained"
@@ -218,7 +225,7 @@ const Profile: React.FC = () => {
                                 {checkoutLoading ? <CircularProgress size={24} /> : 'Subscribe Now'}
                             </Button>
                         </Box>
-                    ) : cancellationPending ? (
+                    ) : subscriptionStatus === 'pending_cancellation' ? (
                         <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
                             <Button
                                 variant="contained"
