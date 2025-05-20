@@ -12,9 +12,9 @@
 // import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import Stripe from "stripe";
-import {onRequest} from "firebase-functions/v2/https";
+import { onRequest } from "firebase-functions/v2/https";
 import Anthropic from "@anthropic-ai/sdk";
-import {defineSecret} from "firebase-functions/params";
+import { defineSecret } from "firebase-functions/params";
 import * as cors from "cors";
 
 // Start writing functions
@@ -48,7 +48,7 @@ export const checkEnv = onRequest({
 
 // Initialize CORS middleware with specific configuration
 const corsHandler = cors({
-  origin: "https://study.noahgdorfman.com",
+  origin: ["https://study.noahgdorfman.com", "http://localhost:3000"],
   methods: ["POST", "OPTIONS"],
   credentials: true,
   allowedHeaders: ["Content-Type", "Authorization"],
@@ -59,56 +59,143 @@ export const createCheckoutSession = onRequest({
   secrets: [stripeSecretKey, stripePriceId],
   cors: false,
 }, async (req, res) => {
-  // Add logging for debugging
-  console.log("Request received:", {
+  console.log("Create checkout session request received:", {
     method: req.method,
     headers: req.headers,
     origin: req.headers.origin,
+    body: req.body,
   });
+
+  // Handle preflight requests
+  if (req.method === "OPTIONS") {
+    console.log("Handling OPTIONS request");
+    res.set("Access-Control-Allow-Origin", req.headers.origin || "https://study.noahgdorfman.com");
+    res.set("Access-Control-Allow-Methods", "POST, OPTIONS");
+    res.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    res.set("Access-Control-Allow-Credentials", "true");
+    res.status(204).send("");
+    return;
+  }
 
   // Use the cors middleware
   return corsHandler(req, res, async () => {
     try {
       // Get the auth token from the Authorization header
       const authHeader = req.headers.authorization;
+      console.log("Auth header received:", {
+        hasHeader: !!authHeader,
+        startsWithBearer: authHeader?.startsWith("Bearer "),
+        headerValue: authHeader,
+      });
+
       if (!authHeader?.startsWith("Bearer ")) {
-        res.status(401).json({error: "Unauthorized"});
+        console.log("Unauthorized: Invalid auth header format");
+        res.status(401).json({ error: "Unauthorized" });
         return;
       }
 
       const idToken = authHeader.split("Bearer ")[1];
-      const decodedToken = await admin.auth().verifyIdToken(idToken);
-      const uid = decodedToken.uid;
-
-      const stripe = new Stripe(stripeSecretKey.value(), {
-        apiVersion: "2025-04-30.basil" as Stripe.LatestApiVersion,
-        typescript: true,
+      console.log("Decoding ID token...", {
+        tokenLength: idToken.length,
+        tokenPrefix: idToken.substring(0, 10) + "...",
       });
+      try {
+        console.log("Verifying ID token...");
+        const decodedToken =
+          await admin.auth().verifyIdToken(idToken, true);
+        // Check if token is revoked
+        console.log("Token verified successfully:", {
+          uid: decodedToken.uid,
+          email: decodedToken.email,
+          auth_time: decodedToken.auth_time,
+          exp: decodedToken.exp,
+          iat: decodedToken.iat,
+        });
 
-      const session = await stripe.checkout.sessions.create({
-        payment_method_types: ["card"],
-        mode: "subscription",
-        line_items: [
-          {
-            price: stripePriceId.value(),
-            quantity: 1,
-          },
-        ],
-        success_url: "https://study.noahgdorfman.com/success",
-        cancel_url: "https://study.noahgdorfman.com/cancel",
-        client_reference_id: uid,
-        customer_email: decodedToken.email,
-      });
+        const uid = decodedToken.uid;
+        console.log("Token decoded successfully:", {
+          uid,
+          email: decodedToken.email,
+        });
 
-      // Log response headers before sending
-      console.log("Response headers before sending:", {
-        headers: res.getHeaders(),
-      });
+        console.log("Initializing Stripe...");
+        const stripe = new Stripe(stripeSecretKey.value(), {
+          apiVersion: "2025-04-30.basil" as Stripe.LatestApiVersion,
+          typescript: true,
+        });
 
-      res.json({sessionId: session.id});
+        // First, create or retrieve the customer
+        console.log("Looking up existing customer...");
+        const customers = await stripe.customers.list({
+          email: decodedToken.email,
+          limit: 1,
+        });
+        console.log("Customer lookup results:", {
+          foundCustomers: customers.data.length,
+          firstCustomerId: customers.data[0]?.id,
+        });
+
+        let customer;
+        if (customers.data.length > 0) {
+          customer = customers.data[0];
+          console.log("Using existing customer:", {
+            id: customer.id,
+            email: customer.email,
+          });
+        } else {
+          console.log("Creating new customer...");
+          customer = await stripe.customers.create({
+            email: decodedToken.email,
+            metadata: {
+              firebaseUID: uid,
+            },
+          });
+          console.log("New customer created:", {
+            id: customer.id,
+            email: customer.email,
+          });
+        }
+
+        console.log("Creating checkout session...");
+        const session = await stripe.checkout.sessions.create({
+          payment_method_types: ["card"],
+          mode: "subscription",
+          customer: customer.id,
+          line_items: [
+            {
+              price: stripePriceId.value(),
+              quantity: 1,
+            },
+          ],
+          success_url: "https://study.noahgdorfman.com/success",
+          cancel_url: "https://study.noahgdorfman.com/cancel",
+          client_reference_id: uid,
+          customer_email: decodedToken.email,
+        });
+        console.log("Checkout session created:", {
+          sessionId: session.id,
+          customerId: session.customer,
+        });
+
+        res.json({ sessionId: session.id });
+      } catch (tokenError) {
+        console.error("Token verification failed:", {
+          error: tokenError,
+          errorMessage:
+            tokenError instanceof Error ? tokenError.message :
+              "Unknown error",
+          errorStack:
+            tokenError instanceof Error ? tokenError.stack : undefined,
+        });
+        res.status(401).json({ error: "Invalid token" });
+      }
     } catch (error) {
-      console.error("Error creating checkout session:", error);
-      res.status(500).json({error: "Failed to create checkout session"});
+      console.error("Error creating checkout session:", {
+        error,
+        errorMessage: error instanceof Error ? error.message : "Unknown error",
+        errorStack: error instanceof Error ? error.stack : undefined,
+      });
+      res.status(500).json({ error: "Failed to create checkout session" });
     }
   });
 });
@@ -123,7 +210,7 @@ export const cancelSubscription = onRequest({
       // Get the auth token from the Authorization header
       const authHeader = req.headers.authorization;
       if (!authHeader?.startsWith("Bearer ")) {
-        res.status(401).json({error: "Unauthorized"});
+        res.status(401).json({ error: "Unauthorized" });
         return;
       }
 
@@ -143,7 +230,7 @@ export const cancelSubscription = onRequest({
       });
 
       if (customers.data.length === 0) {
-        res.status(404).json({error: "No subscription found"});
+        res.status(404).json({ error: "No subscription found" });
         return;
       }
 
@@ -157,7 +244,7 @@ export const cancelSubscription = onRequest({
       });
 
       if (subscriptions.data.length === 0) {
-        res.status(404).json({error: "No active subscription found"});
+        res.status(404).json({ error: "No active subscription found" });
         return;
       }
 
@@ -172,10 +259,10 @@ export const cancelSubscription = onRequest({
       await admin.database().ref(`users/${uid}/subscriptionStatus`)
         .set("pending_cancellation");
 
-      res.json({success: true});
+      res.json({ success: true });
     } catch (error) {
       console.error("Error canceling subscription:", error);
-      res.status(500).json({error: "Failed to cancel subscription"});
+      res.status(500).json({ error: "Failed to cancel subscription" });
     }
   });
 });
@@ -190,7 +277,7 @@ export const reactivateSubscription = onRequest({
       // Get the auth token from the Authorization header
       const authHeader = req.headers.authorization;
       if (!authHeader?.startsWith("Bearer ")) {
-        res.status(401).json({error: "Unauthorized"});
+        res.status(401).json({ error: "Unauthorized" });
         return;
       }
 
@@ -210,7 +297,7 @@ export const reactivateSubscription = onRequest({
       });
 
       if (customers.data.length === 0) {
-        res.status(404).json({error: "No subscription found"});
+        res.status(404).json({ error: "No subscription found" });
         return;
       }
 
@@ -224,7 +311,7 @@ export const reactivateSubscription = onRequest({
       });
 
       if (subscriptions.data.length === 0) {
-        res.status(404).json({error: "No active subscription found"});
+        res.status(404).json({ error: "No active subscription found" });
         return;
       }
 
@@ -239,10 +326,10 @@ export const reactivateSubscription = onRequest({
       await admin.database().ref(`users/${uid}/subscriptionStatus`)
         .set("subscribed");
 
-      res.json({success: true});
+      res.json({ success: true });
     } catch (error) {
       console.error("Error reactivating subscription:", error);
-      res.status(500).json({error: "Failed to reactivate subscription"});
+      res.status(500).json({ error: "Failed to reactivate subscription" });
     }
   });
 });
@@ -349,26 +436,47 @@ export const handleStripeWebhook = onRequest({
 
       try {
         // Get the customer
+        console.log("Attempting to retrieve customer:", subscription.customer);
         const customer = await stripe.customers.
           retrieve(subscription.customer as string);
+        console.log("Customer retrieved:", {
+          id: customer.id,
+          hasEmail: "email" in customer,
+          email: "email" in customer ? customer.email : "no email",
+        });
+
         if ("email" in customer && customer.email) {
+          console.log("Looking up user by email:", customer.email);
           // Find the user by email
           const userRecord = await admin.auth().getUserByEmail(customer.email);
+          console.log("User record found:", {
+            uid: userRecord.uid,
+            email: userRecord.email,
+          });
+
           if (userRecord) {
+            console.log("Updating subscription status in database for user:",
+              userRecord.uid);
             // Update the user's subscription status
-            await admin.database().
-              ref(`users/${userRecord.uid}/subscriptionStatus`)
+            await admin.database()
+              .ref(`users/${userRecord.uid}/subscriptionStatus`)
               .set("unsubscribed");
             console.log("Successfully updated subscription status for user:",
               userRecord.uid);
           }
+        } else {
+          console.log("No email found in customer record");
         }
       } catch (err) {
-        console.error("Failed to update subscription status:", err);
+        console.error("Failed to update subscription status:", {
+          error: err,
+          errorMessage: err instanceof Error ? err.message : "Unknown error",
+          errorStack: err instanceof Error ? err.stack : undefined,
+        });
       }
     }
 
-    res.json({received: true});
+    res.json({ received: true });
   });
 });
 
@@ -400,14 +508,14 @@ export const generateFlashcards = onRequest({
   // Handle CORS for actual request
   return corsHandler(req, res, async () => {
     try {
-      const {topic, count = 10, apiKey} = req.body;
+      const { topic, count = 10, apiKey } = req.body;
 
       console.log("Parsed request body:",
-        {topic, count, apiKey: apiKey ? "present" : "not present"});
+        { topic, count, apiKey: apiKey ? "present" : "not present" });
 
       if (!topic) {
         console.error("Topic is missing from request");
-        res.status(400).json({error: "Topic is required"});
+        res.status(400).json({ error: "Topic is required" });
         return;
       }
 
@@ -415,7 +523,7 @@ export const generateFlashcards = onRequest({
       const anthropicKey = apiKey || anthropicApiKey.value();
 
       if (!anthropicKey) {
-        res.status(500).json({error: "No API key available"});
+        res.status(500).json({ error: "No API key available" });
         return;
       }
 
@@ -474,10 +582,10 @@ export const generateFlashcards = onRequest({
         createdAt: Date.now(),
       }));
 
-      res.json({flashcards: formattedFlashcards});
+      res.json({ flashcards: formattedFlashcards });
     } catch (error) {
       console.error("Error generating flashcards:", error);
-      res.status(500).json({error: "Failed to generate flashcards"});
+      res.status(500).json({ error: "Failed to generate flashcards" });
     }
   });
 });

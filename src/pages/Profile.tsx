@@ -80,9 +80,15 @@ const Profile: React.FC = () => {
             }
 
             // Get the current user's ID token
-            const idToken = await user.getIdToken();
+            console.log("Getting ID token for user:", user.uid);
+            const idToken = await user.getIdToken(true); // Force refresh the token
+            console.log("Got ID token:", {
+                tokenLength: idToken.length,
+                tokenPrefix: idToken.substring(0, 10) + '...',
+            });
 
             // Call the createCheckoutSession function
+            console.log("Making request to create checkout session...");
             const response = await fetch('https://us-central1-flashcards-d25b9.cloudfunctions.net/createCheckoutSession', {
                 method: 'POST',
                 headers: {
@@ -93,10 +99,18 @@ const Profile: React.FC = () => {
             });
 
             if (!response.ok) {
-                throw new Error('Failed to create checkout session');
+                const errorData = await response.text();
+                console.error("Checkout session creation failed:", {
+                    status: response.status,
+                    statusText: response.statusText,
+                    errorData,
+                    headers: Object.fromEntries(response.headers.entries()),
+                });
+                throw new Error(`Failed to create checkout session: ${response.status} ${response.statusText} - ${errorData}`);
             }
 
             const { sessionId } = await response.json();
+            console.log("Checkout session created successfully:", sessionId);
 
             // Initialize Stripe
             const stripe = await loadStripe(publishableKey);
@@ -110,8 +124,12 @@ const Profile: React.FC = () => {
                 throw error;
             }
         } catch (err: any) {
+            console.error('Checkout error:', {
+                error: err,
+                message: err.message,
+                stack: err.stack,
+            });
             setError(err.message || 'Failed to start checkout process.');
-            console.error('Checkout error:', err);
         } finally {
             setCheckoutLoading(false);
         }
