@@ -80,11 +80,21 @@ const Profile: React.FC = () => {
             }
 
             // Get the current user's ID token
-            console.log("Getting ID token for user:", user.uid);
-            const idToken = await user.getIdToken(true); // Force refresh the token
+            console.log("Getting ID token for user:", {
+                uid: user.uid,
+                email: user.email,
+                emailVerified: user.emailVerified,
+                isAnonymous: user.isAnonymous,
+            });
+
+            // Force token refresh and get new token
+            await user.getIdToken(true);
+            const idToken = await user.getIdToken();
+
             console.log("Got ID token:", {
                 tokenLength: idToken.length,
                 tokenPrefix: idToken.substring(0, 10) + '...',
+                tokenParts: idToken.split('.').length, // Should be 3 for a valid JWT
             });
 
             // Call the createCheckoutSession function
@@ -128,6 +138,11 @@ const Profile: React.FC = () => {
                 error: err,
                 message: err.message,
                 stack: err.stack,
+                user: user ? {
+                    uid: user.uid,
+                    email: user.email,
+                    emailVerified: user.emailVerified,
+                } : 'no user',
             });
             setError(err.message || 'Failed to start checkout process.');
         } finally {

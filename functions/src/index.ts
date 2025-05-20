@@ -98,11 +98,17 @@ export const createCheckoutSession = onRequest({
       console.log("Decoding ID token...", {
         tokenLength: idToken.length,
         tokenPrefix: idToken.substring(0, 10) + "...",
+        tokenParts: idToken.split('.').length, // Should be 3 for a valid JWT
       });
+
       try {
         console.log("Verifying ID token...");
-        const decodedToken =
-          await admin.auth().verifyIdToken(idToken, true);
+        // First check if the token is a valid JWT format
+        if (idToken.split('.').length !== 3) {
+          throw new Error('Invalid token format: not a valid JWT');
+        }
+
+        const decodedToken = await admin.auth().verifyIdToken(idToken, true);
         // Check if token is revoked
         console.log("Token verified successfully:", {
           uid: decodedToken.uid,
@@ -110,7 +116,12 @@ export const createCheckoutSession = onRequest({
           auth_time: decodedToken.auth_time,
           exp: decodedToken.exp,
           iat: decodedToken.iat,
+          token_valid: decodedToken.exp > Date.now() / 1000,
         });
+
+        if (!decodedToken.email) {
+          throw new Error('Token does not contain email');
+        }
 
         const uid = decodedToken.uid;
         console.log("Token decoded successfully:", {
