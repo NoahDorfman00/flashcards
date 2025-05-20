@@ -88,18 +88,34 @@ const Profile: React.FC = () => {
             });
 
             // Force token refresh and get new token
-            await user.getIdToken(true);
-            const idToken = await user.getIdToken();
+            console.log("Starting token refresh process...");
+            try {
+                await user.getIdToken(true);
+                console.log("Token refresh completed successfully");
+            } catch (refreshError) {
+                console.error("Token refresh failed:", refreshError);
+                throw refreshError;
+            }
 
+            const idToken = await user.getIdToken();
             console.log("Got ID token:", {
                 tokenLength: idToken.length,
                 tokenPrefix: idToken.substring(0, 10) + '...',
                 tokenParts: idToken.split('.').length, // Should be 3 for a valid JWT
+                tokenExpiry: new Date(JSON.parse(atob(idToken.split('.')[1])).exp * 1000).toISOString(),
+                currentTime: new Date().toISOString(),
             });
 
             // Call the createCheckoutSession function
-            console.log("Making request to create checkout session...");
-            const response = await fetch('https://us-central1-flashcards-d25b9.cloudfunctions.net/createCheckoutSession', {
+            console.log("Making request to create checkout session...", {
+                url: 'https://createcheckoutsession-n3crmlorra-uc.a.run.app',
+                headers: {
+                    'Authorization': `Bearer ${idToken.substring(0, 10)}...`,
+                    'Content-Type': 'application/json',
+                },
+                credentials: 'include',
+            });
+            const response = await fetch('https://createcheckoutsession-n3crmlorra-uc.a.run.app', {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${idToken}`,
@@ -157,7 +173,7 @@ const Profile: React.FC = () => {
         try {
             const idToken = await user.getIdToken();
 
-            const response = await fetch('https://us-central1-flashcards-d25b9.cloudfunctions.net/cancelSubscription', {
+            const response = await fetch('https://cancelsubscription-n3crmlorra-uc.a.run.app', {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${idToken}`,
@@ -187,7 +203,7 @@ const Profile: React.FC = () => {
         try {
             const idToken = await user.getIdToken();
 
-            const response = await fetch('https://us-central1-flashcards-d25b9.cloudfunctions.net/reactivateSubscription', {
+            const response = await fetch('https://reactivatesubscription-n3crmlorra-uc.a.run.app', {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${idToken}`,
