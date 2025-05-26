@@ -582,61 +582,119 @@ export const generateFlashcards = onRequest({
         apiKey: anthropicKey,
       });
 
-      const maxTokens = 4000;
       const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: maxTokens,
+        model: "claude-3-5-sonnet-20241022",
+        max_tokens: 4000,
+        temperature: 1,
         messages: [
           {
-            role: "user",
-            content: `Generate ${count} high-quality flashcards about ${topic}. 
-                        Format each card as JSON with 
-                        'question' and 'answer' fields. 
-                        Return only the JSON array, no additional text.`,
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": `Generate ${count} high-quality 
+                flashcards about ${topic}. 
+                Format each card as JSON with 'question' 
+                and 'answer' fields. 
+                Return only the JSON array, no additional text.
+                Do not return cite tags in any of your responses, 
+                such as <cite index="10-17,10-18">.`,
+              },
+            ],
           },
         ],
-        tools: [{
-          type: "web_search_20250305",
-          name: "web_search",
-          max_uses: 5,
-        }],
+        tools: [
+          {
+            "type": "custom",
+            "name": "flash_cards",
+            "description": "flash card output format",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "cards": {
+                  "type": "array",
+                  "description": `A list of generated flashcards,
+                  each with a question and answer.`,
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "question": {
+                        "type": "string",
+                        "description": "The question for the flashcard.",
+                      },
+                      "answer": {
+                        "type": "string",
+                        "description": "The answer to the question.",
+                      },
+                    },
+                    "required": [
+                      "question",
+                      "answer",
+                    ],
+                  },
+                },
+              },
+              "required": [
+                "answer",
+              ],
+            },
+          },
+          {
+            "name": "web_search",
+            "type": "web_search_20250305",
+            "max_uses": 2,
+          },
+        ],
       });
 
-      const contentBlock = response.content[0];
-      let raw = (contentBlock && "text" in contentBlock) ? contentBlock.text :
-        JSON.stringify(contentBlock);
-
-      // Try to extract the JSON array
-      const firstBracket = raw.indexOf("[");
-      const lastBracket = raw.lastIndexOf("]");
-      if (firstBracket !== -1 &&
-        lastBracket !== -1 &&
-        lastBracket > firstBracket) {
-        raw = raw.substring(firstBracket,
-          lastBracket + 1);
-      }
-
       let flashcards;
-      try {
-        flashcards = JSON.parse(raw) as Array<{
-          question: string;
-          answer: string
-        }>;
-      } catch (e) {
-        res.status(500).json(
-          {
-            error: "Failed. Try generating a smaller set or reword your topic.",
-          });
-        return;
+      let foundToolUse = false;
+      if (Array.isArray(response.content)) {
+        const toolUse = response.content.find(
+          (item) => item.type === "tool_use" &&
+            item.name === "flash_cards"
+        );
+        if (toolUse && "input" in toolUse && toolUse.input &&
+          typeof toolUse.input === "object" && "cards" in toolUse.input &&
+          Array.isArray(toolUse.input.cards)) {
+          flashcards = toolUse.input.cards;
+          foundToolUse = true;
+        }
       }
 
-      const formattedFlashcards = flashcards.map((card, index) => ({
-        id: `temp-${index}`,
-        question: card.question,
-        answer: card.answer,
-        topic,
-        createdAt: Date.now(),
-      }));
+      if (!foundToolUse) {
+        // Fallback: try to extract from text as before
+        const contentBlock = response.content[0];
+        let raw = (contentBlock && "text" in contentBlock) ? contentBlock.text :
+          JSON.stringify(contentBlock);
+        // Try to extract the JSON array
+        const firstBracket = raw.indexOf("[");
+        const lastBracket = raw.lastIndexOf("]");
+        if (firstBracket !== -1 &&
+          lastBracket !== -1 &&
+          lastBracket > firstBracket) {
+          raw = raw.substring(firstBracket, lastBracket + 1);
+        }
+        try {
+          flashcards = JSON.parse(raw);
+        } catch (e) {
+          res.status(500).json(
+            {
+              error: `Failed. Try generating a 
+              smaller set or reword your topic.`,
+            });
+          return;
+        }
+      }
+
+      const formattedFlashcards = flashcards.map(
+        (card: { question: string; answer: string }, index: number) => ({
+          id: `temp-${index}`,
+          question: card.question,
+          answer: card.answer,
+          topic,
+          createdAt: Date.now(),
+        }));
 
       res.json({flashcards: formattedFlashcards});
     } catch (error) {
