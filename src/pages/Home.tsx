@@ -8,6 +8,10 @@ import { ref, get } from 'firebase/database';
 import Paper from '@mui/material/Paper';
 import { loadStripe } from '@stripe/stripe-js';
 
+// Add SubscriptionStatus type
+// (copying from Profile.tsx for consistency)
+type SubscriptionStatus = 'subscribed' | 'pending_cancellation' | 'unsubscribed';
+
 const Home: React.FC = () => {
     const [topic, setTopic] = useState('');
     const [loading, setLoading] = useState(false);
@@ -16,7 +20,7 @@ const Home: React.FC = () => {
     const [showKeyPrompt, setShowKeyPrompt] = useState(false);
     const [userAnthropicKey, setUserAnthropicKey] = useState<string | null>(null);
     const [flashcardCount, setFlashcardCount] = useState(10);
-    const [isSubscribed, setIsSubscribed] = useState(false);
+    const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus>('unsubscribed');
     const [checkoutLoading, setCheckoutLoading] = useState(false);
     const navigate = useNavigate();
     const { user } = useAuth();
@@ -28,7 +32,7 @@ const Home: React.FC = () => {
     useEffect(() => {
         if (user) {
             const keyRef = ref(database, `users/${user.uid}/anthropicKey`);
-            const subRef = ref(database, `users/${user.uid}/isSubscribed`);
+            const subRef = ref(database, `users/${user.uid}/subscriptionStatus`);
 
             Promise.all([
                 get(keyRef),
@@ -39,11 +43,15 @@ const Home: React.FC = () => {
                 } else {
                     setUserAnthropicKey(null);
                 }
-                setIsSubscribed(subSnapshot.exists() && subSnapshot.val());
+                if (subSnapshot.exists()) {
+                    setSubscriptionStatus(subSnapshot.val() as SubscriptionStatus);
+                } else {
+                    setSubscriptionStatus('unsubscribed');
+                }
             });
         } else {
             setUserAnthropicKey(null);
-            setIsSubscribed(false);
+            setSubscriptionStatus('unsubscribed');
         }
     }, [user]);
 
@@ -58,7 +66,7 @@ const Home: React.FC = () => {
         }
 
         // If user is logged in, has no key, and free generation is used, prompt to add key
-        if (user && !userAnthropicKey && freeGenerationUsed && !isSubscribed) {
+        if (user && !userAnthropicKey && freeGenerationUsed && !['subscribed', 'pending_cancellation'].includes(subscriptionStatus)) {
             setShowKeyPrompt(true);
             return;
         }
@@ -66,10 +74,10 @@ const Home: React.FC = () => {
         setLoading(true);
         try {
             // Use app key if user is subscribed, otherwise use user's key if present
-            const apiKey = isSubscribed ? undefined : userAnthropicKey || undefined;
+            const apiKey = ['subscribed', 'pending_cancellation'].includes(subscriptionStatus) ? undefined : userAnthropicKey || undefined;
             const flashcards = await generateFlashcards(topic, apiKey, flashcardCount);
             // If using the app key (no user key) and not subscribed, set freeGenerationUsed
-            if (!userAnthropicKey && !isSubscribed) {
+            if (!userAnthropicKey && !['subscribed', 'pending_cancellation'].includes(subscriptionStatus)) {
                 localStorage.setItem('freeGenerationUsed', 'true');
             }
             navigate('/study', { state: { flashcards, topic } });
