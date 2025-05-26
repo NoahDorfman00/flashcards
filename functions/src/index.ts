@@ -584,7 +584,7 @@ export const generateFlashcards = onRequest({
 
       const maxTokens = 4000;
       const response = await anthropic.messages.create({
-        model: "claude-3-haiku-20240307",
+        model: "claude-sonnet-4-20250514",
         max_tokens: maxTokens,
         messages: [
           {
@@ -595,6 +595,11 @@ export const generateFlashcards = onRequest({
                         Return only the JSON array, no additional text.`,
           },
         ],
+        tools: [{
+          type: "web_search_20250305",
+          name: "web_search",
+          max_uses: 5,
+        }],
       });
 
       const contentBlock = response.content[0];
