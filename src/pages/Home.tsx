@@ -18,7 +18,7 @@ import { loadStripe } from '@stripe/stripe-js';
 // (copying from Profile.tsx for consistency)
 type SubscriptionStatus = 'subscribed' | 'pending_cancellation' | 'unsubscribed';
 
-const EXAMPLE_TOPICS = ['Photosynthesis', 'The French Revolution', 'Spanish irregular verbs', 'Python basics', 'Cell biology'];
+const EXAMPLE_TOPICS = ['C pointers', 'RTOS scheduling', 'I²C vs SPI', 'Big-O notation', 'Photosynthesis', 'The French Revolution'];
 
 const STEPS = [
     { icon: <EditNoteRoundedIcon />, title: 'Type a topic', body: 'Anything from organic chemistry to world capitals.' },
