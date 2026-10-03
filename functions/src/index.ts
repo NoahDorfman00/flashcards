@@ -34,18 +34,6 @@ const stripeSecretKey = defineSecret("STRIPE_SECRET_KEY");
 const stripeWebhookSecret = defineSecret("STRIPE_WEBHOOK_SECRET");
 const stripePriceId = defineSecret("STRIPE_PRICE_ID");
 
-// Temporary function to check environment variables
-export const checkEnv = onRequest({
-  secrets: [anthropicApiKey],
-  region: "us-central1",
-}, async (req, res) => {
-  res.json({
-    hasAnthropicKey: !!anthropicApiKey.value(),
-    keyLength: anthropicApiKey.value()?.length,
-    envKeys: Object.keys(process.env),
-  });
-});
-
 // Initialize CORS middleware with specific configuration
 const corsHandler = cors({
   origin: ["https://study.noahgdorfman.com", "http://localhost:3000"],
@@ -55,6 +43,31 @@ const corsHandler = cors({
   preflightContinue: false,
   optionsSuccessStatus: 204,
 });
+
+const PAID_STATUSES = ["subscribed", "pending_cancellation"];
+const MAX_FLASHCARDS = 30;
+const MAX_TOPIC_LENGTH = 500;
+
+/**
+ * Verifies the Firebase ID token in the Authorization header.
+ * @param {string | undefined} authHeader The raw Authorization header.
+ * @return {Promise<admin.auth.DecodedIdToken | null>} The decoded token,
+ *   or null if the header is missing or the token is invalid.
+ */
+async function verifyAuthHeader(
+  authHeader: string | undefined
+): Promise<admin.auth.DecodedIdToken | null> {
+  if (!authHeader?.startsWith("Bearer ")) {
+    return null;
+  }
+  try {
+    return await admin.auth().verifyIdToken(authHeader.split("Bearer ")[1]);
+  } catch (error) {
+    console.warn("ID token verification failed:",
+      error instanceof Error ? error.message : "Unknown error");
+    return null;
+  }
+}
 
 // 1. Create Checkout Session (v2)
 export const createCheckoutSession = onRequest({
@@ -73,149 +86,66 @@ export const createCheckoutSession = onRequest({
 
   // Use the cors middleware
   return corsHandler(req, res, async () => {
+    const decodedToken = await verifyAuthHeader(req.headers.authorization);
+    if (!decodedToken) {
+      res.status(401).json({error: "Unauthorized"});
+      return;
+    }
+    if (!decodedToken.email) {
+      res.status(400).json({error: "Account has no email address"});
+      return;
+    }
+    const uid = decodedToken.uid;
+
     try {
-      // Get the auth token from the Authorization header
-      const authHeader = req.headers.authorization;
-      console.log("Auth header received:", {
-        hasHeader: !!authHeader,
-        startsWithBearer: authHeader?.startsWith("Bearer "),
-        headerValue: authHeader ? `${authHeader.substring(0, 20)}...` : null,
-        allHeaders: req.headers,
+      const stripe = new Stripe(stripeSecretKey.value(), {
+        apiVersion: "2025-04-30.basil" as Stripe.LatestApiVersion,
+        typescript: true,
       });
 
-      if (!authHeader?.startsWith("Bearer ")) {
-        console.log("Unauthorized: Invalid auth header format");
-        res.status(401).json({error: "Unauthorized"});
-        return;
-      }
-
-      const idToken = authHeader.split("Bearer ")[1];
-      console.log("Decoding ID token...", {
-        tokenLength: idToken.length,
-        tokenPrefix: idToken.substring(0, 10) + "...",
-        tokenParts: idToken.split(".").length, // Should be 3 for a valid JWT
-        tokenExpiry:
-          new Date(
-            JSON.parse(atob(idToken.split(".")[1])).exp * 1000).toISOString(),
-        currentTime: new Date().toISOString(),
+      // Create or retrieve the customer
+      const customers = await stripe.customers.list({
+        email: decodedToken.email,
+        limit: 1,
       });
 
-      try {
-        console.log("Verifying ID token...");
-        // First check if the token is a valid JWT format
-        if (idToken.split(".").length !== 3) {
-          throw new Error("Invalid token format: not a valid JWT");
-        }
-
-        const decodedToken = await admin.auth().verifyIdToken(idToken, true);
-        // Check if token is revoked
-        console.log("Token verified successfully:", {
-          uid: decodedToken.uid,
+      const customer = customers.data.length > 0 ?
+        customers.data[0] :
+        await stripe.customers.create({
           email: decodedToken.email,
-          auth_time: decodedToken.auth_time,
-          exp: decodedToken.exp,
-          iat: decodedToken.iat,
-          token_valid: decodedToken.exp > Date.now() / 1000,
-          current_time: Date.now() / 1000,
-          time_until_expiry: decodedToken.exp - (Date.now() / 1000),
+          metadata: {
+            firebaseUID: uid,
+          },
         });
 
-        if (!decodedToken.email) {
-          throw new Error("Token does not contain email");
-        }
+      // Store the Stripe customer ID in Firebase
+      await admin.database()
+        .ref(`users/${uid}/stripeCustomerId`).set(customer.id);
 
-        const uid = decodedToken.uid;
-        console.log("Token decoded successfully:", {
-          uid,
-          email: decodedToken.email,
-        });
+      const session = await stripe.checkout.sessions.create({
+        payment_method_types: ["card"],
+        mode: "subscription",
+        customer: customer.id,
+        line_items: [
+          {
+            price: stripePriceId.value(),
+            quantity: 1,
+          },
+        ],
+        success_url: "https://study.noahgdorfman.com/success",
+        cancel_url: "https://study.noahgdorfman.com/profile",
+        client_reference_id: uid,
+      });
+      console.log("Checkout session created:", {
+        uid,
+        sessionId: session.id,
+        customerId: customer.id,
+      });
 
-        console.log("Initializing Stripe...");
-        const stripe = new Stripe(stripeSecretKey.value(), {
-          apiVersion: "2025-04-30.basil" as Stripe.LatestApiVersion,
-          typescript: true,
-        });
-
-        // First, create or retrieve the customer
-        console.log("Looking up existing customer...");
-        const customers = await stripe.customers.list({
-          email: decodedToken.email,
-          limit: 1,
-        });
-        console.log("Customer lookup results:", {
-          foundCustomers: customers.data.length,
-          firstCustomerId: customers.data[0]?.id,
-        });
-
-        let customer;
-        if (customers.data.length > 0) {
-          customer = customers.data[0];
-          console.log("Using existing customer:", {
-            id: customer.id,
-            email: customer.email,
-          });
-
-          // Store the Stripe customer ID in Firebase for existing customers too
-          await admin.database()
-            .ref(`users/${uid}/stripeCustomerId`).set(customer.id);
-          console.log("Stored existing Stripe customer ID in Firebase:",
-            customer.id);
-        } else {
-          console.log("Creating new customer...");
-          customer = await stripe.customers.create({
-            email: decodedToken.email,
-            metadata: {
-              firebaseUID: uid,
-            },
-          });
-          console.log("New customer created:", {
-            id: customer.id,
-            email: customer.email,
-          });
-
-          // Store the Stripe customer ID in Firebase
-          await admin.database()
-            .ref(`users/${uid}/stripeCustomerId`)
-            .set(customer.id);
-          console.log("Stored new Stripe customer ID in Firebase:",
-            customer.id);
-        }
-
-        console.log("Creating checkout session...");
-        const session = await stripe.checkout.sessions.create({
-          payment_method_types: ["card"],
-          mode: "subscription",
-          customer: customer.id,
-          line_items: [
-            {
-              price: stripePriceId.value(),
-              quantity: 1,
-            },
-          ],
-          success_url: "https://study.noahgdorfman.com/success",
-          cancel_url: "https://study.noahgdorfman.com/cancel",
-          client_reference_id: uid,
-        });
-        console.log("Checkout session created:", {
-          sessionId: session.id,
-          customerId: session.customer,
-        });
-
-        res.json({sessionId: session.id});
-      } catch (tokenError) {
-        console.error("Token verification failed:", {
-          error: tokenError,
-          errorMessage:
-            tokenError instanceof Error ? tokenError.message :
-              "Unknown error",
-          errorStack:
-            tokenError instanceof Error ? tokenError.stack : undefined,
-        });
-        res.status(401).json({error: "Invalid token"});
-      }
+      res.json({sessionId: session.id});
     } catch (error) {
       console.error("Error creating checkout session:", {
-        error,
+        uid,
         errorMessage: error instanceof Error ? error.message : "Unknown error",
         errorStack: error instanceof Error ? error.stack : undefined,
       });
@@ -391,15 +321,6 @@ export const handleStripeWebhook = onRequest({
 }, async (req, res) => {
   // Wrap the handler with CORS
   return corsHandler(req, res, async () => {
-    console.log("Webhook received:", {
-      method: req.method,
-      headers: req.headers,
-      hasBody: !!req.body,
-      bodyLength: req.body?.length,
-      signature: req.headers["stripe-signature"],
-      webhookSecretLength: stripeWebhookSecret.value()?.length,
-    });
-
     const stripe = new Stripe(stripeSecretKey.value(), {
       apiVersion: "2025-04-30.basil" as Stripe.LatestApiVersion,
       typescript: true,
@@ -433,18 +354,14 @@ export const handleStripeWebhook = onRequest({
         stripeWebhookSecret.value()
       );
 
-      console.log("Webhook event constructed successfully:", {
+      console.log("Webhook event received:", {
         type: event.type,
         id: event.id,
-        object: event.data.object,
       });
     } catch (err) {
       const error = err as Error;
       console.error("Webhook signature verification failed:", {
         error: error.message,
-        signature: sig,
-        hasWebhookSecret: !!stripeWebhookSecret.value(),
-        webhookSecretLength: stripeWebhookSecret.value()?.length,
         rawBodyLength: req.rawBody?.length,
       });
       res.status(400).send(`Webhook Error: ${error.message}`);
@@ -474,7 +391,7 @@ export const handleStripeWebhook = onRequest({
           return;
         }
       } else {
-        console.error("No user ID found in session:", session);
+        console.error("No user ID found in session:", session.id);
       }
     }
 
@@ -548,34 +465,66 @@ export const generateFlashcards = onRequest({
     return;
   }
 
-  // Log request details
-  console.log("Received request:", {
-    method: req.method,
-    headers: req.headers,
-    body: req.body,
-    query: req.query,
-  });
-
   // Handle CORS for actual request
   return corsHandler(req, res, async () => {
-    try {
-      const {topic, count = 10, apiKey} = req.body;
+    const decodedToken = await verifyAuthHeader(req.headers.authorization);
+    if (!decodedToken) {
+      res.status(401).json({error: "Sign in to generate flashcards"});
+      return;
+    }
+    const uid = decodedToken.uid;
 
-      console.log("Parsed request body:",
-        {topic, count, apiKey: apiKey ? "present" : "not present"});
+    const {topic, apiKey} = req.body ?? {};
+    const count = Math.min(
+      Math.max(Math.floor(Number(req.body?.count) || 10), 1), MAX_FLASHCARDS);
 
-      if (!topic) {
-        console.error("Topic is missing from request");
-        res.status(400).json({error: "Topic is required"});
-        return;
+    if (typeof topic !== "string" || !topic.trim() ||
+      topic.length > MAX_TOPIC_LENGTH) {
+      res.status(400).json({error: "A topic of up to " +
+        `${MAX_TOPIC_LENGTH} characters is required`});
+      return;
+    }
+    if (apiKey !== undefined && apiKey !== null &&
+      (typeof apiKey !== "string" || !apiKey)) {
+      res.status(400).json({error: "Invalid API key"});
+      return;
+    }
+
+    // Decide whose Anthropic key pays for this request. The owner's key is
+    // only used for subscribers or a user's single free generation.
+    const userRef = admin.database().ref(`users/${uid}`);
+    let keySource: "user" | "subscription" | "free";
+    if (apiKey) {
+      keySource = "user";
+    } else {
+      const statusSnap = await userRef.child("subscriptionStatus").get();
+      if (PAID_STATUSES.includes(statusSnap.val())) {
+        keySource = "subscription";
+      } else {
+        // Atomically claim the free generation so concurrent requests can't
+        // both use it.
+        const claim = await userRef.child("freeGenerationUsed")
+          .transaction((used) => used === true ? undefined : true);
+        if (!claim.committed) {
+          res.status(402).json({
+            error: "Free generation already used",
+            code: "FREE_TIER_USED",
+          });
+          return;
+        }
+        keySource = "free";
       }
+    }
 
-      // Get the API key from secret if not provided in request
-      const anthropicKey = apiKey || anthropicApiKey.value();
+    console.log("Generating flashcards:", {uid, topic, count, keySource});
+
+    let gotResponse = false;
+    try {
+      const anthropicKey = keySource === "user" ?
+        apiKey as string : anthropicApiKey.value();
 
       if (!anthropicKey) {
-        res.status(500).json({error: "No API key available"});
-        return;
+        throw new Error("No API key available");
       }
 
       const anthropic = new Anthropic({
@@ -635,7 +584,7 @@ export const generateFlashcards = onRequest({
                 },
               },
               "required": [
-                "answer",
+                "cards",
               ],
             },
           },
@@ -646,6 +595,7 @@ export const generateFlashcards = onRequest({
           },
         ],
       });
+      gotResponse = true;
 
       let flashcards;
       let foundToolUse = false;
@@ -698,7 +648,17 @@ export const generateFlashcards = onRequest({
 
       res.json({flashcards: formattedFlashcards});
     } catch (error) {
-      console.error("Error generating flashcards:", error);
+      console.error("Error generating flashcards:", {
+        uid,
+        keySource,
+        errorMessage: error instanceof Error ? error.message : "Unknown error",
+      });
+      if (keySource === "free" && !gotResponse) {
+        // Give the free generation back if the Anthropic call itself failed
+        // (nothing was billed). Once a response comes back it stays used.
+        await userRef.child("freeGenerationUsed").set(false)
+          .catch(() => undefined);
+      }
       res.status(500).json({error: "Failed to generate flashcards"});
     }
   });

@@ -10,13 +10,20 @@ interface GenerateFlashcardsRequest {
     apiKey?: string;
 }
 
-export const generateFlashcards = async (topic: string, apiKey?: string, count: number = 10): Promise<Flashcard[]> => {
+export class GenerateFlashcardsError extends Error {
+    constructor(message: string, public code?: string) {
+        super(message);
+    }
+}
+
+export const generateFlashcards = async (idToken: string, topic: string, apiKey?: string, count: number = 10): Promise<Flashcard[]> => {
     try {
         console.log('Sending request with:', { topic, count, apiKey: apiKey ? 'present' : 'not present' });
 
         const response = await fetch('https://us-central1-flashcards-d25b9.cloudfunctions.net/generateFlashcards', {
             method: 'POST',
             headers: {
+                'Authorization': `Bearer ${idToken}`,
                 'Content-Type': 'application/json',
             },
             credentials: 'include',
@@ -30,7 +37,7 @@ export const generateFlashcards = async (topic: string, apiKey?: string, count: 
                 statusText: response.statusText,
                 error: errorData
             });
-            throw new Error(errorData.error || 'Failed to generate flashcards');
+            throw new GenerateFlashcardsError(errorData.error || 'Failed to generate flashcards', errorData.code);
         }
 
         const result = await response.json();
