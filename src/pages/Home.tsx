@@ -1,16 +1,30 @@
 import React, { useState, useEffect } from 'react';
-import { TextField, Button, Box, Typography, CircularProgress, Dialog, DialogTitle, DialogContent, DialogActions, MenuItem, Select, InputLabel, FormControl } from '@mui/material';
+import { TextField, Button, Box, Typography, CircularProgress, Dialog, DialogTitle, DialogContent, DialogContentText, DialogActions, ToggleButton, ToggleButtonGroup, Chip, Alert, Stack } from '@mui/material';
+import { alpha } from '@mui/material/styles';
+import AutoAwesomeRoundedIcon from '@mui/icons-material/AutoAwesomeRounded';
+import EditNoteRoundedIcon from '@mui/icons-material/EditNoteRounded';
+import StyleRoundedIcon from '@mui/icons-material/StyleRounded';
+import BookmarkAddedRoundedIcon from '@mui/icons-material/BookmarkAddedRounded';
 import { useNavigate } from 'react-router-dom';
 import { generateFlashcards, GenerateFlashcardsError } from '../services/anthropic';
 import { useAuth } from '../context/AuthContext';
 import { database } from '../services/firebase';
 import { ref, get } from 'firebase/database';
 import Paper from '@mui/material/Paper';
+import { brand } from '../theme';
 import { loadStripe } from '@stripe/stripe-js';
 
 // Add SubscriptionStatus type
 // (copying from Profile.tsx for consistency)
 type SubscriptionStatus = 'subscribed' | 'pending_cancellation' | 'unsubscribed';
+
+const EXAMPLE_TOPICS = ['Photosynthesis', 'The French Revolution', 'Spanish irregular verbs', 'Python basics', 'Cell biology'];
+
+const STEPS = [
+    { icon: <EditNoteRoundedIcon />, title: 'Type a topic', body: 'Anything from organic chemistry to world capitals.' },
+    { icon: <StyleRoundedIcon />, title: 'Get a deck', body: 'Clear question-and-answer cards in seconds.' },
+    { icon: <BookmarkAddedRoundedIcon />, title: 'Study & save', body: 'Flip through, then save sets to revisit later.' },
+];
 
 const Home: React.FC = () => {
     const [topic, setTopic] = useState('');
@@ -145,87 +159,163 @@ const Home: React.FC = () => {
     };
 
     return (
-        <Box sx={{ maxWidth: 600, mx: 'auto', textAlign: 'center', mt: 8 }}>
-            <Paper elevation={3} sx={{ p: 5, borderRadius: 4, boxShadow: '0 4px 24px 0 rgba(10,60,47,0.10)', mx: { xs: 1, sm: 0 } }}>
-                <Typography variant="h4" component="h1" gutterBottom sx={{ fontWeight: 700, color: 'primary.main', letterSpacing: 1 }}>
-                    Instant AI Flashcards
-                </Typography>
-                <Typography variant="body1" paragraph sx={{ color: 'text.secondary', fontSize: 18 }}>
-                    Generate flashcards on any subject
-                </Typography>
+        <Box sx={{ width: '100%', maxWidth: 720, mx: 'auto', textAlign: 'center', pt: { xs: 1, sm: 4 } }}>
+            <Chip
+                icon={<AutoAwesomeRoundedIcon sx={{ fontSize: 16 }} />}
+                label="AI-powered study decks"
+                size="small"
+                sx={{ bgcolor: brand.mintSoft, color: 'primary.dark', mb: { xs: 2, sm: 3 }, px: 0.5, '& .MuiChip-icon': { color: 'primary.main' } }}
+            />
+            <Typography
+                variant="h1"
+                sx={{ fontSize: { xs: 38, sm: 56 }, mb: 2 }}
+            >
+                Any topic.{' '}
+                <Box component="br" sx={{ display: { xs: 'none', sm: 'block' } }} />
+                <Box component="span" sx={{ color: 'primary.main' }}>Instant flashcards.</Box>
+            </Typography>
+            <Typography sx={{ color: 'text.secondary', fontSize: { xs: 16, sm: 19 }, maxWidth: 480, mx: 'auto', mb: { xs: 3, sm: 5 } }}>
+                Type what you're learning and get a study-ready deck in seconds.
+            </Typography>
 
-                <form onSubmit={handleSubmit}>
-                    <TextField
-                        fullWidth
-                        label="Enter a topic"
-                        variant="outlined"
-                        value={topic}
-                        onChange={(e) => setTopic(e.target.value)}
-                        margin="normal"
-                        required
-                        sx={{ bgcolor: '#f8fafb', borderRadius: 2 }}
-                    />
-                    <FormControl fullWidth sx={{ mt: 2 }}>
-                        <InputLabel id="flashcard-count-label">Number of Flashcards</InputLabel>
-                        <Select
-                            labelId="flashcard-count-label"
+            <Paper
+                component="form"
+                onSubmit={handleSubmit}
+                variant="outlined"
+                sx={{
+                    p: { xs: 2, sm: 3 },
+                    textAlign: 'left',
+                    boxShadow: `0 1px 2px ${alpha(brand.ink, 0.04)}, 0 12px 40px ${alpha(brand.greenDark, 0.08)}`,
+                }}
+            >
+                <Typography component="label" htmlFor="topic" sx={{ display: 'block', fontWeight: 700, fontSize: 14, mb: 1 }}>
+                    What do you want to study?
+                </Typography>
+                <TextField
+                    id="topic"
+                    fullWidth
+                    placeholder="e.g. The causes of World War I"
+                    value={topic}
+                    onChange={(e) => setTopic(e.target.value)}
+                    required
+                    autoComplete="off"
+                    inputProps={{ maxLength: 200, enterKeyHint: 'go' }}
+                    sx={{ '& .MuiOutlinedInput-input': { fontSize: 17, py: 1.75 } }}
+                />
+
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 1.5, alignItems: 'center' }}>
+                    <Typography variant="body2" sx={{ color: 'text.secondary', fontWeight: 600, mr: 0.5 }}>Try:</Typography>
+                    {EXAMPLE_TOPICS.map((t) => (
+                        <Chip
+                            key={t}
+                            label={t}
+                            size="small"
+                            variant="outlined"
+                            onClick={() => setTopic(t)}
+                            sx={{ borderColor: 'divider', bgcolor: '#fff', '&:hover': { bgcolor: brand.mintSoft } }}
+                        />
+                    ))}
+                </Box>
+
+                <Box
+                    sx={{
+                        display: 'flex',
+                        flexDirection: { xs: 'column', sm: 'row' },
+                        alignItems: { xs: 'stretch', sm: 'center' },
+                        gap: 2,
+                        mt: 3,
+                        pt: 3,
+                        borderTop: '1px solid',
+                        borderColor: 'divider',
+                    }}
+                >
+                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1.5 }}>
+                        <Typography id="count-label" variant="body2" sx={{ fontWeight: 700 }}>Cards</Typography>
+                        <ToggleButtonGroup
+                            exclusive
+                            size="small"
                             value={flashcardCount}
-                            label="Number of Flashcards"
-                            onChange={e => setFlashcardCount(Number(e.target.value))}
+                            onChange={(_, v) => v && setFlashcardCount(v)}
+                            aria-labelledby="count-label"
                         >
-                            <MenuItem value={10}>10</MenuItem>
-                            <MenuItem value={20}>20</MenuItem>
-                            <MenuItem value={30}>30</MenuItem>
-                        </Select>
-                    </FormControl>
+                            {[10, 20, 30].map((n) => (
+                                <ToggleButton key={n} value={n} sx={{ px: 2 }}>{n}</ToggleButton>
+                            ))}
+                        </ToggleButtonGroup>
+                    </Box>
                     <Button
                         type="submit"
                         variant="contained"
-                        color="primary"
-                        disabled={loading || !topic}
-                        sx={{ mt: 3, px: 5, py: 1.5, borderRadius: 3, fontWeight: 700, fontSize: 18 }}
+                        size="large"
+                        disabled={loading || !topic.trim()}
+                        startIcon={loading ? <CircularProgress size={18} color="inherit" /> : <AutoAwesomeRoundedIcon />}
+                        sx={{ ml: { sm: 'auto' } }}
                     >
-                        {loading ? <CircularProgress size={24} /> : 'Generate Flashcards'}
+                        {loading ? 'Generating…' : 'Generate flashcards'}
                     </Button>
-                </form>
+                </Box>
 
-                {error && (
-                    <Typography color="error" sx={{ mt: 2 }}>
-                        {error}
-                    </Typography>
-                )}
+                {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
             </Paper>
+
+            {!user && (
+                <Typography variant="body2" sx={{ color: 'text.secondary', mt: 2 }}>
+                    Your first deck is free — just create an account.
+                </Typography>
+            )}
+
+            <Box
+                sx={{
+                    display: 'grid',
+                    gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, 1fr)' },
+                    gap: { xs: 1.5, sm: 2 },
+                    mt: { xs: 5, sm: 8 },
+                    textAlign: 'left',
+                }}
+            >
+                {STEPS.map((step, i) => (
+                    <Stack key={step.title} direction={{ xs: 'row', sm: 'column' }} spacing={{ xs: 2, sm: 1.5 }} sx={{ p: { xs: 0.5, sm: 1 } }}>
+                        <Box sx={{ width: 40, height: 40, borderRadius: '12px', bgcolor: brand.mintSoft, color: 'primary.main', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+                            {step.icon}
+                        </Box>
+                        <Box>
+                            <Typography sx={{ fontWeight: 700 }}>{i + 1}. {step.title}</Typography>
+                            <Typography variant="body2" sx={{ color: 'text.secondary' }}>{step.body}</Typography>
+                        </Box>
+                    </Stack>
+                ))}
+            </Box>
 
             {/* Prompt to log in if not logged in */}
             <Dialog open={showAuthPrompt} onClose={() => setShowAuthPrompt(false)}>
-                <DialogTitle>Sign Up to Generate Flashcards</DialogTitle>
+                <DialogTitle>Create a free account</DialogTitle>
                 <DialogContent>
-                    <Typography>
-                        Please sign up or log in to generate flashcards. Your first set is free!
-                    </Typography>
+                    <DialogContentText>
+                        Sign up or log in to generate flashcards. Your first set is on us.
+                    </DialogContentText>
                 </DialogContent>
                 <DialogActions>
-                    <Button onClick={() => setShowAuthPrompt(false)}>Cancel</Button>
-                    <Button onClick={() => navigate('/auth')} variant="contained">Sign Up / Log In</Button>
+                    <Button onClick={() => setShowAuthPrompt(false)} color="inherit">Not now</Button>
+                    <Button onClick={() => navigate('/auth?mode=signup')} variant="contained">Sign up / Log in</Button>
                 </DialogActions>
             </Dialog>
 
             {/* Prompt to subscribe if logged in and free generation used */}
             <Dialog open={showKeyPrompt} onClose={() => setShowKeyPrompt(false)}>
-                <DialogTitle>Subscribe to Generate More</DialogTitle>
+                <DialogTitle>Keep the decks coming</DialogTitle>
                 <DialogContent>
-                    <Typography>
-                        You have reached the limit of 1 free flashcard generation. Subscribe to generate unlimited sets!
-                    </Typography>
+                    <DialogContentText>
+                        You've used your free generation. Subscribe to generate unlimited flashcard sets.
+                    </DialogContentText>
                 </DialogContent>
                 <DialogActions>
-                    <Button onClick={() => setShowKeyPrompt(false)}>Cancel</Button>
+                    <Button onClick={() => setShowKeyPrompt(false)} color="inherit">Not now</Button>
                     <Button
                         onClick={handleCheckout}
                         variant="contained"
                         disabled={checkoutLoading}
                     >
-                        {checkoutLoading ? <CircularProgress size={24} /> : 'Subscribe Now'}
+                        {checkoutLoading ? <CircularProgress size={22} color="inherit" /> : 'Subscribe'}
                     </Button>
                 </DialogActions>
             </Dialog>
@@ -233,4 +323,4 @@ const Home: React.FC = () => {
     );
 };
 
-export default Home; 
+export default Home;

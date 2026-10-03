@@ -1,9 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { Box, Typography, TextField, Button, Alert, CircularProgress, Divider, Collapse, IconButton, Dialog, DialogTitle, DialogContent, DialogActions } from '@mui/material';
+import { Box, Typography, TextField, Button, Alert, CircularProgress, Collapse, Dialog, DialogTitle, DialogContent, DialogContentText, DialogActions, Avatar, Chip, ButtonBase } from '@mui/material';
+import { alpha } from '@mui/material/styles';
+import { Link, useNavigate } from 'react-router-dom';
+import LogoutRoundedIcon from '@mui/icons-material/LogoutRounded';
+import { brand } from '../theme';
 import { useAuth } from '../context/AuthContext';
 import { database } from '../services/firebase';
 import { ref, get, set } from 'firebase/database';
-import Paper from '@mui/material/Paper';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { loadStripe } from '@stripe/stripe-js';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
@@ -12,7 +15,8 @@ import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 type SubscriptionStatus = 'subscribed' | 'pending_cancellation' | 'unsubscribed';
 
 const Profile: React.FC = () => {
-    const { user } = useAuth();
+    const { user, logout } = useAuth();
+    const navigate = useNavigate();
     const [anthropicKey, setAnthropicKey] = useState('');
     const [loading, setLoading] = useState(false);
     const [success, setSuccess] = useState(false);
@@ -227,145 +231,141 @@ const Profile: React.FC = () => {
     };
 
     if (!user) {
-        return <Typography variant="h6">You must be logged in to view this page.</Typography>;
+        return (
+            <Box sx={{ textAlign: 'center', pt: 6 }}>
+                <Typography variant="h6" gutterBottom>Log in to view your profile</Typography>
+                <Button component={Link} to="/auth" variant="contained">Log in</Button>
+            </Box>
+        );
     }
 
     if (initialLoading) {
         return <Box sx={{ display: 'flex', justifyContent: 'center', mt: 6 }}><CircularProgress /></Box>;
     }
 
+    const handleLogout = async () => {
+        await logout();
+        navigate('/');
+    };
+
+    const sectionSx = {
+        p: { xs: 2.5, sm: 3 },
+        border: '1px solid',
+        borderColor: 'divider',
+        borderRadius: '20px',
+        bgcolor: '#fff',
+    } as const;
+
+    const status = {
+        subscribed: { label: 'Active', color: 'success' as const, body: 'Unlimited flashcard generation.' },
+        pending_cancellation: { label: 'Cancels at period end', color: 'warning' as const, body: 'Your subscription stays active until the end of your current billing period.' },
+        unsubscribed: { label: 'Free plan', color: 'default' as const, body: 'Subscribe to generate unlimited flashcard sets.' },
+    }[subscriptionStatus];
+
+    const userLabel = user.displayName || user.email || '';
+
     return (
-        <Box sx={{ maxWidth: 500, mx: 'auto', mt: { xs: 3, sm: 6 }, px: 1 }}>
-            <Paper elevation={3} sx={{ p: { xs: 2, sm: 4 }, borderRadius: 4, boxShadow: '0 4px 24px 0 rgba(10,60,47,0.10)', bgcolor: '#fff' }}>
-                <Typography variant="h5" gutterBottom sx={{ fontWeight: 700, color: 'primary.main', textAlign: 'center' }}>Profile</Typography>
-                <Typography variant="body1" gutterBottom sx={{ color: 'text.secondary', textAlign: 'center' }}>Email: {user.email}</Typography>
+        <Box sx={{ width: '100%', maxWidth: 560, mx: 'auto' }}>
+            <Typography variant="h4" component="h1" sx={{ fontSize: { xs: 28, sm: 34 }, mb: { xs: 3, sm: 4 } }}>Profile</Typography>
 
-                {/* Subscription Status */}
-                <Box sx={{ mt: 4, mb: 3 }}>
-                    <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>Subscription Status</Typography>
-                    <Typography variant="body1" sx={{
-                        color: subscriptionStatus === 'subscribed'
-                            ? 'success.main'
-                            : subscriptionStatus === 'pending_cancellation'
-                                ? 'warning.main'
-                                : 'text.secondary',
-                        mb: 1
-                    }}>
-                        {subscriptionStatus === 'subscribed'
-                            ? 'Active Subscription'
-                            : subscriptionStatus === 'pending_cancellation'
-                                ? 'Subscription (Cancellation Pending)'
-                                : 'No Active Subscription'
-                        }
-                    </Typography>
-                    {subscriptionStatus === 'pending_cancellation' && (
-                        <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>
-                            Your subscription will remain active until the end of your current billing period.
-                        </Typography>
-                    )}
-                    {subscriptionStatus === 'unsubscribed' ? (
-                        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
-                            <Button
-                                variant="contained"
-                                color="primary"
-                                onClick={handleCheckout}
-                                disabled={checkoutLoading}
-                                sx={{ px: 4, py: 1.5, borderRadius: 3, fontWeight: 700 }}
-                            >
-                                {checkoutLoading ? <CircularProgress size={24} /> : 'Subscribe Now'}
-                            </Button>
-                        </Box>
-                    ) : subscriptionStatus === 'pending_cancellation' ? (
-                        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
-                            <Button
-                                variant="contained"
-                                color="primary"
-                                onClick={handleReactivateSubscription}
-                                disabled={cancelling}
-                                sx={{ px: 4, py: 1.5, borderRadius: 3, fontWeight: 700 }}
-                            >
-                                {cancelling ? <CircularProgress size={24} /> : 'Keep Subscription'}
-                            </Button>
-                        </Box>
-                    ) : (
-                        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
-                            <Button
-                                variant="outlined"
-                                color="error"
-                                onClick={() => setShowCancelDialog(true)}
-                                sx={{ px: 4, py: 1.5, borderRadius: 3, fontWeight: 700 }}
-                            >
-                                Cancel Subscription
-                            </Button>
-                        </Box>
-                    )}
+            {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
+
+            {/* Account */}
+            <Box sx={{ ...sectionSx, display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+                <Avatar src={user.photoURL || undefined} sx={{ width: 48, height: 48, bgcolor: 'primary.main', fontWeight: 700 }}>
+                    {userLabel.charAt(0).toUpperCase()}
+                </Avatar>
+                <Box sx={{ flex: 1, minWidth: 0 }}>
+                    {user.displayName && <Typography sx={{ fontWeight: 700 }} noWrap>{user.displayName}</Typography>}
+                    <Typography variant="body2" sx={{ color: 'text.secondary' }} noWrap>{user.email}</Typography>
                 </Box>
+            </Box>
 
-                {/* Advanced Settings Section */}
-                <Box sx={{ mt: 3, display: 'flex', justifyContent: 'center' }}>
-                    <Button
-                        onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
-                        endIcon={showAdvancedSettings ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
-                        sx={{ color: 'text.secondary', mb: 1, fontSize: '0.9rem' }}
-                    >
-                        Advanced Settings
+            {/* Subscription */}
+            <Box sx={{ ...sectionSx, mb: 2 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: 1 }}>
+                    <Typography variant="h6" component="h2" sx={{ fontSize: 17 }}>Subscription</Typography>
+                    <Chip
+                        label={status.label}
+                        size="small"
+                        color={status.color === 'default' ? undefined : status.color}
+                        variant={status.color === 'default' ? 'outlined' : 'filled'}
+                        sx={status.color === 'success' ? { bgcolor: brand.mintSoft, color: 'primary.dark' } : undefined}
+                    />
+                </Box>
+                <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2.5 }}>{status.body}</Typography>
+                {subscriptionStatus === 'unsubscribed' ? (
+                    <Button variant="contained" onClick={handleCheckout} disabled={checkoutLoading} fullWidth size="large">
+                        {checkoutLoading ? <CircularProgress size={22} color="inherit" /> : 'Subscribe'}
                     </Button>
-                </Box>
+                ) : subscriptionStatus === 'pending_cancellation' ? (
+                    <Button variant="contained" onClick={handleReactivateSubscription} disabled={cancelling} fullWidth size="large">
+                        {cancelling ? <CircularProgress size={22} color="inherit" /> : 'Keep subscription'}
+                    </Button>
+                ) : (
+                    <Button variant="outlined" color="error" onClick={() => setShowCancelDialog(true)} sx={{ borderColor: alpha('#C8372D', 0.4) }}>
+                        Cancel subscription
+                    </Button>
+                )}
+            </Box>
+
+            {/* Advanced */}
+            <Box sx={{ ...sectionSx, p: 0, overflow: 'hidden' }}>
+                <ButtonBase
+                    onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
+                    aria-expanded={showAdvancedSettings}
+                    sx={{ width: '100%', justifyContent: 'space-between', p: { xs: 2.5, sm: 3 }, textAlign: 'left' }}
+                >
+                    <Box>
+                        <Typography variant="h6" component="h2" sx={{ fontSize: 17 }}>Advanced</Typography>
+                        <Typography variant="body2" sx={{ color: 'text.secondary' }}>Use your own Anthropic API key</Typography>
+                    </Box>
+                    {showAdvancedSettings ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
+                </ButtonBase>
                 <Collapse in={showAdvancedSettings}>
-                    <Divider sx={{ my: 2 }} />
-                    <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>API Settings</Typography>
-                    <form onSubmit={handleSave}>
+                    <Box component="form" onSubmit={handleSave} sx={{ px: { xs: 2.5, sm: 3 }, pb: { xs: 2.5, sm: 3 } }}>
                         <TextField
-                            label="Anthropic API Key"
+                            label="Anthropic API key"
                             value={anthropicKey}
                             onChange={e => setAnthropicKey(e.target.value)}
                             fullWidth
-                            margin="normal"
                             type="password"
                             autoComplete="off"
-                            sx={{ bgcolor: '#f8fafb', borderRadius: 2 }}
+                            placeholder="sk-ant-…"
                         />
-                        {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
-                        {success && <Alert severity="success" sx={{ mt: 2 }}>Key saved!</Alert>}
-                        <Box sx={{ display: 'flex', justifyContent: 'center' }}>
-                            <Button
-                                type="submit"
-                                variant="contained"
-                                color="primary"
-                                sx={{ mt: 2, px: 4, py: 1.5, borderRadius: 3, fontWeight: 700 }}
-                                disabled={loading}
-                            >
-                                {loading ? <CircularProgress size={24} /> : 'Save Key'}
-                            </Button>
-                        </Box>
-                    </form>
+                        {success && <Alert severity="success" sx={{ mt: 2 }}>Key saved</Alert>}
+                        <Button type="submit" variant="contained" sx={{ mt: 2 }} disabled={loading}>
+                            {loading ? <CircularProgress size={22} color="inherit" /> : 'Save key'}
+                        </Button>
+                    </Box>
                 </Collapse>
+            </Box>
 
-                {/* Cancel Subscription Dialog */}
-                <Dialog open={showCancelDialog} onClose={() => setShowCancelDialog(false)}>
-                    <DialogTitle>Cancel Subscription</DialogTitle>
-                    <DialogContent>
-                        <Typography>
-                            Are you sure you want to cancel your subscription? You'll still have access until the end of your current billing period.
-                        </Typography>
-                    </DialogContent>
-                    <DialogActions>
-                        <Button onClick={() => setShowCancelDialog(false)} disabled={cancelling}>
-                            Keep Subscription
-                        </Button>
-                        <Button
-                            onClick={handleCancelSubscription}
-                            color="error"
-                            variant="contained"
-                            disabled={cancelling}
-                        >
-                            {cancelling ? <CircularProgress size={24} /> : 'Cancel Subscription'}
-                        </Button>
-                    </DialogActions>
-                </Dialog>
-            </Paper>
+            <Box sx={{ display: 'flex', justifyContent: 'center', mt: 3 }}>
+                <Button color="inherit" onClick={handleLogout} startIcon={<LogoutRoundedIcon />} sx={{ color: 'text.secondary' }}>
+                    Log out
+                </Button>
+            </Box>
+
+            {/* Cancel Subscription Dialog */}
+            <Dialog open={showCancelDialog} onClose={() => setShowCancelDialog(false)}>
+                <DialogTitle>Cancel subscription?</DialogTitle>
+                <DialogContent>
+                    <DialogContentText>
+                        You'll keep access until the end of your current billing period.
+                    </DialogContentText>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setShowCancelDialog(false)} disabled={cancelling} color="inherit">
+                        Keep it
+                    </Button>
+                    <Button onClick={handleCancelSubscription} color="error" variant="contained" disabled={cancelling}>
+                        {cancelling ? <CircularProgress size={22} color="inherit" /> : 'Cancel subscription'}
+                    </Button>
+                </DialogActions>
+            </Dialog>
         </Box>
     );
 };
 
-export default Profile; 
+export default Profile;

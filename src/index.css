@@ -1,13 +1,22 @@
+html {
+    -webkit-text-size-adjust: 100%;
+}
+
 body {
     min-height: 100vh;
+    min-height: 100dvh;
     margin: 0;
-    font-family: 'Inter', system-ui, sans-serif;
-    background: linear-gradient(135deg, #0a3c2f 0%, #145a43 100%);
-    color: #fff;
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    background: #F7F7F4;
+    color: #15201C;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    -webkit-tap-highlight-color: transparent;
 }
 
 #root {
     min-height: 100vh;
+    min-height: 100dvh;
     display: flex;
     flex-direction: column;
 }
