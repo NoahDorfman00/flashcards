@@ -19,11 +19,11 @@ likely to cover, get a deck, flip through it.
 
 ### Generating a deck
 
-The client POSTs `{ topic, count, apiKey? }` to an HTTPS function,
+The client POSTs `{ topic, count }` with a Firebase ID token to an HTTPS function,
 `generateFlashcards` (Firebase Functions v2 `onRequest`, 1 GiB memory, 60s
 timeout). The function calls Claude:
 
-- model: `claude-sonnet-4-5`, `max_tokens: 4000`, `temperature: 1`
+- model: `claude-sonnet-5-5`, `max_tokens: 4000`, `temperature: 1`
 - a user-turn prompt: generate `${count}` high-quality flashcards about
   `${topic}` as a JSON array of `question`/`answer` objects, with nothing
   else in the reply, and no cite tags
@@ -86,29 +86,36 @@ users/
   {uid}/
     subscriptionStatus   "subscribed" | "pending_cancellation" | "unsubscribed"
     stripeCustomerId     set by createCheckoutSession
-    anthropicKey         optional, user-supplied
+    anthropicKeyEncrypted  optional; AES-256-GCM, written only by saveAnthropicKey
+    anthropicKeyHint       last four characters, for display
     flashcardSets/
       {pushId}/          { title, topic, flashcards[], userId, createdAt }
 ```
 
 [`database.rules.json`](database.rules.json) locks everything down by
-default: you can read only your own user node and write only your own key and
-flashcard sets. Subscription status, Stripe customer ID and the free-deck flag
-are server-only.
+default: you can read only your own user node and write only your own
+flashcard sets. Your API key, subscription status, Stripe customer ID and the
+free-deck flag are server-only.
+
+A saved Anthropic key goes through `saveAnthropicKey`, which checks it with
+Anthropic and stores it encrypted with AES-256-GCM. The data key lives in
+Secret Manager, and your uid is bound in as associated data, so one user's
+ciphertext won't decrypt as anyone else's. The app only ever shows the last
+four characters.
 
 ### The UI
 
 - **Auth:** email/password or Google sign-in (popup), through Firebase Auth.
-- **Study:** one card at a time. Click the card or **Flip** to switch sides;
-  **Previous** and **Next** move through the deck, with a "Card X of N"
-  counter. A save icon pushes the deck to `flashcardSets`, or asks you to
+- **Study:** one card at a time, with a 3D flip, a progress bar, and
+  keyboard and swipe navigation. A save icon pushes the deck to `flashcardSets`, or asks you to
   sign up if you're logged out.
 - **My Sets:** a live `onValue` listener on your sets, newest first, with
   Study and a confirmed Delete on each.
 - **Profile:** subscription status with Subscribe, Cancel or Keep buttons,
   plus the API-key field under Advanced Settings.
-- Material UI with a custom theme (deep-green gradient, teal accent, Inter),
-  and a hamburger drawer on phones.
+- Material UI with a custom light theme (off-white paper, deep green, a mint
+  accent, Plus Jakarta Sans, pill buttons), a sticky header, and a drawer on
+  phones.
 
 Decks reach the Study page through React Router `location.state`, not the
 URL. That keeps it simple, but reloading `/study` loses the deck.
@@ -120,7 +127,7 @@ URL. That keeps it simple, but reloading `/study` loses the deck.
 | Frontend | React 18 + TypeScript (Create React App), MUI 5, React Router 6 |
 | Auth / data | Firebase Auth, Firebase Realtime Database |
 | Backend | Firebase Functions v2 (`onRequest`), TypeScript, Node 22 |
-| AI | `@anthropic-ai/sdk`, Claude Sonnet 4.5, custom tool + web search |
+| AI | `@anthropic-ai/sdk`, Claude Sonnet 5.5, custom tool + web search |
 | Payments | Stripe Checkout (subscription mode) + webhook |
 | Hosting | Static CRA build on Vercel. Its Git integration deploys `main` to production. |
 
@@ -141,6 +148,10 @@ URL. That keeps it simple, but reloading `/study` loses the deck.
   `claude-3-5-sonnet-20241022` with the `flash_cards` tool and
   `max_uses: 2` ("dialed in Anthropic API usage").
 - **Oct 8, 2025:** `claude-sonnet-4-5`.
+- **Oct 2, 2026:** server-side auth and tiers, database rules, encrypted
+  API keys, and `claude-sonnet-5-5`.
+- **Oct 3, 2026:** a full style overhaul: new light theme, logo, and social
+  card.
 
 ## Running it locally
 
