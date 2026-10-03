@@ -18,7 +18,7 @@ const Home: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
     const [showAuthPrompt, setShowAuthPrompt] = useState(false);
     const [showKeyPrompt, setShowKeyPrompt] = useState(false);
-    const [userAnthropicKey, setUserAnthropicKey] = useState<string | null>(null);
+    const [hasOwnKey, setHasOwnKey] = useState(false);
     const [flashcardCount, setFlashcardCount] = useState(10);
     const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus>('unsubscribed');
     const [checkoutLoading, setCheckoutLoading] = useState(false);
@@ -26,10 +26,10 @@ const Home: React.FC = () => {
     const navigate = useNavigate();
     const { user } = useAuth();
 
-    // Fetch user's Anthropic key and subscription status if logged in
+    // Fetch whether the user has saved their own key, and their subscription status, if logged in
     useEffect(() => {
         if (user) {
-            const keyRef = ref(database, `users/${user.uid}/anthropicKey`);
+            const keyRef = ref(database, `users/${user.uid}/anthropicKeyHint`);
             const subRef = ref(database, `users/${user.uid}/subscriptionStatus`);
             const freeRef = ref(database, `users/${user.uid}/freeGenerationUsed`);
 
@@ -38,11 +38,7 @@ const Home: React.FC = () => {
                 get(subRef),
                 get(freeRef)
             ]).then(([keySnapshot, subSnapshot, freeSnapshot]) => {
-                if (keySnapshot.exists() && keySnapshot.val()) {
-                    setUserAnthropicKey(keySnapshot.val());
-                } else {
-                    setUserAnthropicKey(null);
-                }
+                setHasOwnKey(keySnapshot.exists());
                 if (subSnapshot.exists()) {
                     setSubscriptionStatus(subSnapshot.val() as SubscriptionStatus);
                 } else {
@@ -51,7 +47,7 @@ const Home: React.FC = () => {
                 setFreeGenerationUsed(freeSnapshot.val() === true);
             });
         } else {
-            setUserAnthropicKey(null);
+            setHasOwnKey(false);
             setSubscriptionStatus('unsubscribed');
             setFreeGenerationUsed(false);
         }
@@ -68,19 +64,17 @@ const Home: React.FC = () => {
         }
 
         // If user is logged in, has no key, and free generation is used, prompt to add key
-        if (user && !userAnthropicKey && freeGenerationUsed && !['subscribed', 'pending_cancellation'].includes(subscriptionStatus)) {
+        if (user && !hasOwnKey && freeGenerationUsed && !['subscribed', 'pending_cancellation'].includes(subscriptionStatus)) {
             setShowKeyPrompt(true);
             return;
         }
 
         setLoading(true);
         try {
-            // Use app key if user is subscribed, otherwise use user's key if present
-            const apiKey = ['subscribed', 'pending_cancellation'].includes(subscriptionStatus) ? undefined : userAnthropicKey || undefined;
             const idToken = await user.getIdToken();
-            const flashcards = await generateFlashcards(idToken, topic, apiKey, flashcardCount);
-            // If using the app key (no user key) and not subscribed, the server has used up the free generation
-            if (!apiKey && !['subscribed', 'pending_cancellation'].includes(subscriptionStatus)) {
+            const flashcards = await generateFlashcards(idToken, topic, flashcardCount);
+            // Without a subscription or their own key, the server has used up the free generation
+            if (!hasOwnKey && !['subscribed', 'pending_cancellation'].includes(subscriptionStatus)) {
                 setFreeGenerationUsed(true);
             }
             navigate('/study', { state: { flashcards, topic } });
@@ -90,7 +84,7 @@ const Home: React.FC = () => {
                 setShowKeyPrompt(true);
                 return;
             }
-            setError('Failed to generate flashcards. Please try again.');
+            setError(err instanceof GenerateFlashcardsError ? err.message : 'Failed to generate flashcards. Please try again.');
         } finally {
             setLoading(false);
         }

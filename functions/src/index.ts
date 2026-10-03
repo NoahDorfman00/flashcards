@@ -16,6 +16,7 @@ import {onRequest} from "firebase-functions/v2/https";
 import Anthropic from "@anthropic-ai/sdk";
 import {defineSecret} from "firebase-functions/params";
 import * as cors from "cors";
+import {apiKeyHint, decryptApiKey, encryptApiKey} from "./apiKeyCrypto";
 
 // Start writing functions
 // https://firebase.google.com/docs/functions/typescript
@@ -33,6 +34,7 @@ const anthropicApiKey = defineSecret("ANTHROPIC_API_KEY");
 const stripeSecretKey = defineSecret("STRIPE_SECRET_KEY");
 const stripeWebhookSecret = defineSecret("STRIPE_WEBHOOK_SECRET");
 const stripePriceId = defineSecret("STRIPE_PRICE_ID");
+const keyEncryptionKey = defineSecret("ANTHROPIC_KEY_ENCRYPTION_KEY");
 
 // Initialize CORS middleware with specific configuration
 const corsHandler = cors({
@@ -448,11 +450,120 @@ export const handleStripeWebhook = onRequest({
   });
 });
 
+/**
+ * Reads and decrypts the user's own Anthropic key, if they've saved one.
+ * Keys still stored in plaintext (saved before encryption was added) are
+ * encrypted in place on first use.
+ * @param {admin.database.Reference} userRef The user's database record.
+ * @param {string} uid The user's uid.
+ * @return {Promise<string | null>} The API key, or null if none is saved.
+ */
+async function getUserApiKey(
+  userRef: admin.database.Reference, uid: string
+): Promise<string | null> {
+  const [encryptedSnap, legacySnap] = await Promise.all([
+    userRef.child("anthropicKeyEncrypted").get(),
+    userRef.child("anthropicKey").get(),
+  ]);
+  const encrypted = encryptedSnap.val();
+  if (typeof encrypted === "string" && encrypted) {
+    return decryptApiKey(encrypted, uid, keyEncryptionKey.value());
+  }
+  const legacy = legacySnap.val();
+  if (typeof legacy === "string" && legacy.trim()) {
+    await storeUserApiKey(userRef, uid, legacy.trim());
+    return legacy.trim();
+  }
+  return null;
+}
+
+/**
+ * Encrypts and stores a user's API key, removing any plaintext copy.
+ * @param {admin.database.Reference} userRef The user's database record.
+ * @param {string} uid The user's uid.
+ * @param {string} apiKey The API key.
+ * @return {Promise<void>}
+ */
+async function storeUserApiKey(
+  userRef: admin.database.Reference, uid: string, apiKey: string
+): Promise<void> {
+  await userRef.update({
+    anthropicKeyEncrypted:
+      encryptApiKey(apiKey, uid, keyEncryptionKey.value()),
+    anthropicKeyHint: apiKeyHint(apiKey),
+    anthropicKey: null,
+  });
+}
+
+// Save (or remove) the user's own Anthropic API key, encrypted at rest.
+export const saveAnthropicKey = onRequest({
+  secrets: [keyEncryptionKey],
+  cors: false,
+  region: "us-central1",
+}, async (req, res) => {
+  return corsHandler(req, res, async () => {
+    const decodedToken = await verifyAuthHeader(req.headers.authorization);
+    if (!decodedToken) {
+      res.status(401).json({error: "Unauthorized"});
+      return;
+    }
+    const uid = decodedToken.uid;
+    const userRef = admin.database().ref(`users/${uid}`);
+    const apiKey = typeof req.body?.apiKey === "string" ?
+      req.body.apiKey.trim() : "";
+
+    try {
+      if (!apiKey) {
+        await userRef.update({
+          anthropicKeyEncrypted: null,
+          anthropicKeyHint: null,
+          anthropicKey: null,
+        });
+        console.log("Removed Anthropic key:", {uid});
+        res.json({hint: null});
+        return;
+      }
+
+      if (!/^sk-ant-[A-Za-z0-9_-]{20,300}$/.test(apiKey)) {
+        res.status(400).json({error: "That doesn't look like an " +
+          "Anthropic API key (it should start with sk-ant-)"});
+        return;
+      }
+
+      // Check the key works before saving it.
+      try {
+        await new Anthropic({apiKey}).models.list({limit: 1});
+      } catch (error) {
+        if (error instanceof Anthropic.AuthenticationError ||
+          error instanceof Anthropic.PermissionDeniedError) {
+          res.status(400).json({error: "Anthropic rejected that API key"});
+          return;
+        }
+        // Network or service errors: save anyway rather than block the user.
+        console.warn("Could not verify Anthropic key:", {
+          uid,
+          errorMessage: error instanceof Error ? error.message : "Unknown",
+        });
+      }
+
+      await storeUserApiKey(userRef, uid, apiKey);
+      console.log("Saved Anthropic key:", {uid});
+      res.json({hint: apiKeyHint(apiKey)});
+    } catch (error) {
+      console.error("Error saving Anthropic key:", {
+        uid,
+        errorMessage: error instanceof Error ? error.message : "Unknown error",
+      });
+      res.status(500).json({error: "Failed to save key"});
+    }
+  });
+});
+
 // Flashcard Generation Function (v2)
 export const generateFlashcards = onRequest({
-  secrets: [anthropicApiKey],
+  secrets: [anthropicApiKey, keyEncryptionKey],
   memory: "1GiB",
-  timeoutSeconds: 60,
+  timeoutSeconds: 300,
   region: "us-central1",
 }, async (req, res) => {
   // Handle CORS preflight
@@ -474,7 +585,7 @@ export const generateFlashcards = onRequest({
     }
     const uid = decodedToken.uid;
 
-    const {topic, apiKey} = req.body ?? {};
+    const topic = req.body?.topic;
     const count = Math.min(
       Math.max(Math.floor(Number(req.body?.count) || 10), 1), MAX_FLASHCARDS);
 
@@ -484,22 +595,30 @@ export const generateFlashcards = onRequest({
         `${MAX_TOPIC_LENGTH} characters is required`});
       return;
     }
-    if (apiKey !== undefined && apiKey !== null &&
-      (typeof apiKey !== "string" || !apiKey)) {
-      res.status(400).json({error: "Invalid API key"});
-      return;
-    }
 
-    // Decide whose Anthropic key pays for this request. The owner's key is
-    // only used for subscribers or a user's single free generation.
+    // Decide whose Anthropic key pays for this request: the owner's key for
+    // subscribers, then the user's own saved key, then the user's single
+    // free generation.
     const userRef = admin.database().ref(`users/${uid}`);
     let keySource: "user" | "subscription" | "free";
-    if (apiKey) {
-      keySource = "user";
+    let userApiKey: string | null = null;
+    const statusSnap = await userRef.child("subscriptionStatus").get();
+    if (PAID_STATUSES.includes(statusSnap.val())) {
+      keySource = "subscription";
     } else {
-      const statusSnap = await userRef.child("subscriptionStatus").get();
-      if (PAID_STATUSES.includes(statusSnap.val())) {
-        keySource = "subscription";
+      try {
+        userApiKey = await getUserApiKey(userRef, uid);
+      } catch (error) {
+        console.error("Could not read saved Anthropic key:", {
+          uid,
+          errorMessage: error instanceof Error ? error.message : "Unknown",
+        });
+        res.status(500).json({error: "Couldn't read your saved API key. " +
+          "Please save it again on your profile."});
+        return;
+      }
+      if (userApiKey) {
+        keySource = "user";
       } else {
         // Atomically claim the free generation so concurrent requests can't
         // both use it.
@@ -520,131 +639,123 @@ export const generateFlashcards = onRequest({
 
     let gotResponse = false;
     try {
-      const anthropicKey = keySource === "user" ?
-        apiKey as string : anthropicApiKey.value();
-
-      if (!anthropicKey) {
-        throw new Error("No API key available");
-      }
-
       const anthropic = new Anthropic({
-        apiKey: anthropicKey,
+        apiKey: userApiKey ?? anthropicApiKey.value(),
       });
 
-      const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-5",
-        max_tokens: 4000,
-        temperature: 1,
+      const response = await anthropic.beta.messages.create({
+        model: "claude-sonnet-5-5",
+        max_tokens: 16000,
+        output_config: {effort: "medium"},
+        // Retry policy declines on the server-defined fallback model.
+        betas: ["server-side-fallback-2026-07-01"],
+        fallbacks: "default",
         messages: [
           {
-            "role": "user",
-            "content": [
-              {
-                "type": "text",
-                "text": `Generate ${count} high-quality 
-                flashcards about ${topic}. 
-                Format each card as JSON with 'question' 
-                and 'answer' fields. 
-                Return only the JSON array, no additional text.
-                Do not return cite tags in any of your responses, 
-                such as <cite index="10-17,10-18">.`,
-              },
-            ],
+            role: "user",
+            content: `Generate ${count} high-quality flashcards about the ` +
+              "topic below. Use web search only if the topic needs current " +
+              "or specialized facts. When you're done, call the flash_cards " +
+              `tool once with all ${count} cards. Don't put citation tags ` +
+              "in the questions or answers.\n\n" +
+              `<topic>${topic}</topic>`,
           },
         ],
         tools: [
           {
-            "type": "custom",
-            "name": "flash_cards",
-            "description": "flash card output format",
-            "input_schema": {
-              "type": "object",
-              "properties": {
-                "cards": {
-                  "type": "array",
-                  "description": `A list of generated flashcards,
-                  each with a question and answer.`,
-                  "items": {
-                    "type": "object",
-                    "properties": {
-                      "question": {
-                        "type": "string",
-                        "description": "The question for the flashcard.",
+            type: "custom",
+            name: "flash_cards",
+            description: "Submit the finished set of flashcards.",
+            strict: true,
+            input_schema: {
+              type: "object",
+              properties: {
+                cards: {
+                  type: "array",
+                  description: "The flashcards, each with a question and " +
+                    "answer.",
+                  items: {
+                    type: "object",
+                    properties: {
+                      question: {
+                        type: "string",
+                        description: "The question for the flashcard.",
                       },
-                      "answer": {
-                        "type": "string",
-                        "description": "The answer to the question.",
+                      answer: {
+                        type: "string",
+                        description: "The answer to the question.",
                       },
                     },
-                    "required": [
-                      "question",
-                      "answer",
-                    ],
+                    required: ["question", "answer"],
+                    additionalProperties: false,
                   },
                 },
               },
-              "required": [
-                "cards",
-              ],
+              required: ["cards"],
+              additionalProperties: false,
             },
           },
           {
-            "name": "web_search",
-            "type": "web_search_20250305",
-            "max_uses": 2,
+            name: "web_search",
+            type: "web_search_20260209",
+            max_uses: 2,
           },
         ],
       });
       gotResponse = true;
 
-      let flashcards;
-      let foundToolUse = false;
-      if (Array.isArray(response.content)) {
-        const toolUse = response.content.find(
-          (item) => item.type === "tool_use" &&
-            item.name === "flash_cards"
-        );
-        if (toolUse && "input" in toolUse && toolUse.input &&
-          typeof toolUse.input === "object" && "cards" in toolUse.input &&
-          Array.isArray(toolUse.input.cards)) {
-          flashcards = toolUse.input.cards;
-          foundToolUse = true;
-        }
+      console.log("Anthropic response:", {
+        uid,
+        model: response.model,
+        stopReason: response.stop_reason,
+        inputTokens: response.usage.input_tokens,
+        outputTokens: response.usage.output_tokens,
+      });
+
+      if (response.stop_reason === "refusal") {
+        res.status(422).json({error: "Flashcards can't be generated for " +
+          "this topic. Try rewording it or choose a different topic."});
+        return;
       }
 
-      if (!foundToolUse) {
-        // Fallback: try to extract from text as before
-        const contentBlock = response.content[0];
-        let raw = (contentBlock && "text" in contentBlock) ? contentBlock.text :
-          JSON.stringify(contentBlock);
-        // Try to extract the JSON array
-        const firstBracket = raw.indexOf("[");
-        const lastBracket = raw.lastIndexOf("]");
-        if (firstBracket !== -1 &&
-          lastBracket !== -1 &&
-          lastBracket > firstBracket) {
-          raw = raw.substring(firstBracket, lastBracket + 1);
-        }
+      let flashcards: unknown;
+      const toolUse = response.content.find(
+        (block) => block.type === "tool_use" && block.name === "flash_cards");
+      if (toolUse && toolUse.type === "tool_use") {
+        flashcards = (toolUse.input as {cards?: unknown}).cards;
+      } else {
+        // Fallback: the model answered in text instead of calling the tool.
+        const text = response.content
+          .filter((block) => block.type === "text")
+          .map((block) => block.type === "text" ? block.text : "")
+          .join("\n");
+        const firstBracket = text.indexOf("[");
+        const lastBracket = text.lastIndexOf("]");
         try {
-          flashcards = JSON.parse(raw);
+          flashcards = JSON.parse(
+            text.substring(firstBracket, lastBracket + 1));
         } catch (e) {
-          res.status(500).json(
-            {
-              error: `Failed. Try generating a 
-              smaller set or reword your topic.`,
-            });
-          return;
+          flashcards = null;
         }
       }
 
-      const formattedFlashcards = flashcards.map(
-        (card: { question: string; answer: string }, index: number) => ({
-          id: `temp-${index}`,
-          question: card.question,
-          answer: card.answer,
-          topic,
-          createdAt: Date.now(),
-        }));
+      const cards = Array.isArray(flashcards) ? flashcards.filter(
+        (card): card is {question: string; answer: string} =>
+          typeof card?.question === "string" &&
+          typeof card?.answer === "string") : [];
+      if (cards.length === 0) {
+        res.status(500).json({error: "Failed. Try generating a smaller " +
+          "set or reword your topic."});
+        return;
+      }
+
+      const formattedFlashcards = cards.map((card, index) => ({
+        id: `temp-${index}`,
+        question: card.question,
+        answer: card.answer,
+        topic,
+        createdAt: Date.now(),
+      }));
 
       res.json({flashcards: formattedFlashcards});
     } catch (error) {
@@ -659,22 +770,13 @@ export const generateFlashcards = onRequest({
         await userRef.child("freeGenerationUsed").set(false)
           .catch(() => undefined);
       }
+      if (keySource === "user" &&
+        error instanceof Anthropic.AuthenticationError) {
+        res.status(400).json({error: "Anthropic rejected your saved API " +
+          "key. Update it on your profile."});
+        return;
+      }
       res.status(500).json({error: "Failed to generate flashcards"});
     }
   });
 });
-
-// // Test function to check all secrets
-// export const testSecrets = onCall({
-//   secrets: [stripeSecretKey, stripePriceId,
-//     stripeWebhookSecret, anthropicApiKey],
-// }, async () => {
-//   return {
-//     stripeKey: !!stripeSecretKey.value(),
-//     priceId: !!stripePriceId.value(),
-//     webhookSecret: !!stripeWebhookSecret.value(),
-//     anthropicKey: !!anthropicApiKey.value(),
-//     priceIdValue: stripePriceId.value(),
-//     envKeys: Object.keys(process.env),
-//   };
-// });

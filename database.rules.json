@@ -6,10 +6,6 @@
       ".indexOn": ["stripeCustomerId"],
       "$uid": {
         ".read": "auth != null && auth.uid === $uid",
-        "anthropicKey": {
-          ".write": "auth != null && auth.uid === $uid",
-          ".validate": "newData.isString() && newData.val().length <= 300"
-        },
         "flashcardSets": {
           ".write": "auth != null && auth.uid === $uid",
           "$setId": {
@@ -23,6 +19,12 @@
           ".write": false
         },
         "freeGenerationUsed": {
+          ".write": false
+        },
+        "anthropicKeyEncrypted": {
+          ".write": false
+        },
+        "anthropicKeyHint": {
           ".write": false
         }
       }
