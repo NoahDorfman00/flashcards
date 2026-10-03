@@ -1,32 +1,34 @@
 import React from 'react';
 import { Box, Typography, Button, Paper } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import { useNavigate } from 'react-router-dom';
-import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
+import CheckRoundedIcon from '@mui/icons-material/CheckRounded';
+import { brand } from '../theme';
 
 const Success: React.FC = () => {
     const navigate = useNavigate();
 
     return (
-        <Box sx={{ maxWidth: 600, mx: 'auto', textAlign: 'center', mt: 8 }}>
-            <Paper elevation={3} sx={{ p: 5, borderRadius: 4, boxShadow: '0 4px 24px 0 rgba(10,60,47,0.10)', mx: { xs: 1, sm: 0 } }}>
-                <CheckCircleOutlineIcon sx={{ fontSize: 80, color: 'success.main', mb: 2 }} />
-                <Typography variant="h4" component="h1" gutterBottom sx={{ fontWeight: 700, color: 'primary.main', letterSpacing: 1 }}>
-                    Subscription Successful!
+        <Box sx={{ width: '100%', maxWidth: 480, mx: 'auto', pt: { xs: 2, sm: 6 } }}>
+            <Paper
+                variant="outlined"
+                sx={{ p: { xs: 3, sm: 5 }, textAlign: 'center', boxShadow: `0 1px 2px ${alpha(brand.ink, 0.04)}, 0 12px 40px ${alpha(brand.greenDark, 0.08)}` }}
+            >
+                <Box sx={{ width: 64, height: 64, borderRadius: '50%', bgcolor: brand.mintSoft, color: 'primary.main', display: 'grid', placeItems: 'center', mx: 'auto', mb: 3 }}>
+                    <CheckRoundedIcon sx={{ fontSize: 36 }} />
+                </Box>
+                <Typography variant="h4" component="h1" gutterBottom sx={{ fontSize: { xs: 26, sm: 32 } }}>
+                    You're subscribed
                 </Typography>
-                <Typography variant="body1" paragraph sx={{ color: 'text.secondary', fontSize: 18, mb: 4 }}>
-                    Thank you for subscribing! You can now generate unlimited flashcard sets.
+                <Typography sx={{ color: 'text.secondary', mb: 4 }}>
+                    Thanks for subscribing! You can now generate unlimited flashcard sets.
                 </Typography>
-                <Button
-                    variant="contained"
-                    color="primary"
-                    onClick={() => navigate('/')}
-                    sx={{ px: 5, py: 1.5, borderRadius: 3, fontWeight: 700, fontSize: 18 }}
-                >
-                    Generate Flashcards
+                <Button variant="contained" size="large" onClick={() => navigate('/')}>
+                    Start generating
                 </Button>
             </Paper>
         </Box>
     );
 };
 
-export default Success; 
+export default Success;
