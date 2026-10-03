@@ -6,8 +6,8 @@ import LogoutRoundedIcon from '@mui/icons-material/LogoutRounded';
 import { brand } from '../theme';
 import { useAuth } from '../context/AuthContext';
 import { database } from '../services/firebase';
-import { ref, get, set } from 'firebase/database';
-import { getFunctions, httpsCallable } from 'firebase/functions';
+import { ref, get } from 'firebase/database';
+import { saveAnthropicKey } from '../services/anthropic';
 import { loadStripe } from '@stripe/stripe-js';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
@@ -18,8 +18,9 @@ const Profile: React.FC = () => {
     const { user, logout } = useAuth();
     const navigate = useNavigate();
     const [anthropicKey, setAnthropicKey] = useState('');
+    const [keyHint, setKeyHint] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
-    const [success, setSuccess] = useState(false);
+    const [success, setSuccess] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [initialLoading, setInitialLoading] = useState(true);
     const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus>('unsubscribed');
@@ -31,13 +32,11 @@ const Profile: React.FC = () => {
     useEffect(() => {
         if (user) {
             setInitialLoading(true);
-            // Load Anthropic key
-            const keyRef = ref(database, `users/${user.uid}/anthropicKey`);
-            get(keyRef)
+            // Load the saved key's hint (the key itself is stored encrypted and never sent to the browser)
+            const hintRef = ref(database, `users/${user.uid}/anthropicKeyHint`);
+            get(hintRef)
                 .then((snapshot) => {
-                    if (snapshot.exists()) {
-                        setAnthropicKey(snapshot.val());
-                    }
+                    setKeyHint(snapshot.exists() ? snapshot.val() : null);
                 })
                 .catch(() => { });
 
@@ -56,21 +55,27 @@ const Profile: React.FC = () => {
         }
     }, [user]);
 
-    const handleSave = async (e: React.FormEvent) => {
-        e.preventDefault();
+    const saveKey = async (key: string) => {
         if (!user) return;
         setLoading(true);
         setError(null);
-        setSuccess(false);
+        setSuccess(null);
         try {
-            const keyRef = ref(database, `users/${user.uid}/anthropicKey`);
-            await set(keyRef, anthropicKey);
-            setSuccess(true);
+            const idToken = await user.getIdToken();
+            const hint = await saveAnthropicKey(idToken, key);
+            setKeyHint(hint);
+            setAnthropicKey('');
+            setSuccess(hint ? 'Key saved!' : 'Key removed.');
         } catch (err: any) {
-            setError('Failed to save key.');
+            setError(err.message || 'Failed to save key.');
         } finally {
             setLoading(false);
         }
+    };
+
+    const handleSave = (e: React.FormEvent) => {
+        e.preventDefault();
+        saveKey(anthropicKey);
     };
 
     const handleCheckout = async () => {
@@ -324,8 +329,11 @@ const Profile: React.FC = () => {
                 </ButtonBase>
                 <Collapse in={showAdvancedSettings}>
                     <Box component="form" onSubmit={handleSave} sx={{ px: { xs: 2.5, sm: 3 }, pb: { xs: 2.5, sm: 3 } }}>
+                        <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>
+                            {keyHint ? `Saved key ending in ${keyHint}. It's stored encrypted.` : 'No API key saved.'}
+                        </Typography>
                         <TextField
-                            label="Anthropic API key"
+                            label={keyHint ? 'Replace Anthropic API key' : 'Anthropic API key'}
                             value={anthropicKey}
                             onChange={e => setAnthropicKey(e.target.value)}
                             fullWidth
@@ -333,10 +341,17 @@ const Profile: React.FC = () => {
                             autoComplete="off"
                             placeholder="sk-ant-…"
                         />
-                        {success && <Alert severity="success" sx={{ mt: 2 }}>Key saved</Alert>}
-                        <Button type="submit" variant="contained" sx={{ mt: 2 }} disabled={loading}>
-                            {loading ? <CircularProgress size={22} color="inherit" /> : 'Save key'}
-                        </Button>
+                        {success && <Alert severity="success" sx={{ mt: 2 }}>{success}</Alert>}
+                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 2 }}>
+                            <Button type="submit" variant="contained" disabled={loading || !anthropicKey.trim()}>
+                                {loading ? <CircularProgress size={22} color="inherit" /> : 'Save key'}
+                            </Button>
+                            {keyHint && (
+                                <Button variant="outlined" color="error" onClick={() => saveKey('')} disabled={loading} sx={{ borderColor: alpha('#C8372D', 0.4) }}>
+                                    Remove key
+                                </Button>
+                            )}
+                        </Box>
                     </Box>
                 </Collapse>
             </Box>
