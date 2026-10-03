@@ -188,7 +188,7 @@ const Home: React.FC = () => {
                 <TextField
                     id="topic"
                     fullWidth
-                    placeholder="e.g. The causes of World War I"
+                    placeholder="e.g. Interrupts on ARM Cortex-M"
                     value={topic}
                     onChange={(e) => setTopic(e.target.value)}
                     required
