@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { TextField, Button, Box, Typography, CircularProgress, Dialog, DialogTitle, DialogContent, DialogActions, MenuItem, Select, InputLabel, FormControl } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
-import { generateFlashcards } from '../services/anthropic';
+import { generateFlashcards, GenerateFlashcardsError } from '../services/anthropic';
 import { useAuth } from '../context/AuthContext';
 import { database } from '../services/firebase';
 import { ref, get } from 'firebase/database';
@@ -22,22 +22,22 @@ const Home: React.FC = () => {
     const [flashcardCount, setFlashcardCount] = useState(10);
     const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus>('unsubscribed');
     const [checkoutLoading, setCheckoutLoading] = useState(false);
+    const [freeGenerationUsed, setFreeGenerationUsed] = useState(false);
     const navigate = useNavigate();
     const { user } = useAuth();
-
-    // Check if free generation has been used
-    const freeGenerationUsed = localStorage.getItem('freeGenerationUsed') === 'true';
 
     // Fetch user's Anthropic key and subscription status if logged in
     useEffect(() => {
         if (user) {
             const keyRef = ref(database, `users/${user.uid}/anthropicKey`);
             const subRef = ref(database, `users/${user.uid}/subscriptionStatus`);
+            const freeRef = ref(database, `users/${user.uid}/freeGenerationUsed`);
 
             Promise.all([
                 get(keyRef),
-                get(subRef)
-            ]).then(([keySnapshot, subSnapshot]) => {
+                get(subRef),
+                get(freeRef)
+            ]).then(([keySnapshot, subSnapshot, freeSnapshot]) => {
                 if (keySnapshot.exists() && keySnapshot.val()) {
                     setUserAnthropicKey(keySnapshot.val());
                 } else {
@@ -48,10 +48,12 @@ const Home: React.FC = () => {
                 } else {
                     setSubscriptionStatus('unsubscribed');
                 }
+                setFreeGenerationUsed(freeSnapshot.val() === true);
             });
         } else {
             setUserAnthropicKey(null);
             setSubscriptionStatus('unsubscribed');
+            setFreeGenerationUsed(false);
         }
     }, [user]);
 
@@ -59,8 +61,8 @@ const Home: React.FC = () => {
         e.preventDefault();
         setError(null);
 
-        // If user is not logged in and free generation is used, prompt login
-        if (!user && freeGenerationUsed) {
+        // Generation requires an account (the free generation is tracked per user)
+        if (!user) {
             setShowAuthPrompt(true);
             return;
         }
@@ -75,13 +77,19 @@ const Home: React.FC = () => {
         try {
             // Use app key if user is subscribed, otherwise use user's key if present
             const apiKey = ['subscribed', 'pending_cancellation'].includes(subscriptionStatus) ? undefined : userAnthropicKey || undefined;
-            const flashcards = await generateFlashcards(topic, apiKey, flashcardCount);
-            // If using the app key (no user key) and not subscribed, set freeGenerationUsed
-            if (!userAnthropicKey && !['subscribed', 'pending_cancellation'].includes(subscriptionStatus)) {
-                localStorage.setItem('freeGenerationUsed', 'true');
+            const idToken = await user.getIdToken();
+            const flashcards = await generateFlashcards(idToken, topic, apiKey, flashcardCount);
+            // If using the app key (no user key) and not subscribed, the server has used up the free generation
+            if (!apiKey && !['subscribed', 'pending_cancellation'].includes(subscriptionStatus)) {
+                setFreeGenerationUsed(true);
             }
             navigate('/study', { state: { flashcards, topic } });
         } catch (err) {
+            if (err instanceof GenerateFlashcardsError && err.code === 'FREE_TIER_USED') {
+                setFreeGenerationUsed(true);
+                setShowKeyPrompt(true);
+                return;
+            }
             setError('Failed to generate flashcards. Please try again.');
         } finally {
             setLoading(false);
@@ -188,12 +196,12 @@ const Home: React.FC = () => {
                 )}
             </Paper>
 
-            {/* Prompt to log in if not logged in and free generation used */}
+            {/* Prompt to log in if not logged in */}
             <Dialog open={showAuthPrompt} onClose={() => setShowAuthPrompt(false)}>
-                <DialogTitle>Sign Up to Generate More</DialogTitle>
+                <DialogTitle>Sign Up to Generate Flashcards</DialogTitle>
                 <DialogContent>
                     <Typography>
-                        You have reached the limit of 1 free flashcard generation. Please sign up or log in to generate more sets!
+                        Please sign up or log in to generate flashcards. Your first set is free!
                     </Typography>
                 </DialogContent>
                 <DialogActions>
